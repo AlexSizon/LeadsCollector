@@ -54,6 +54,13 @@ class InputConfig(BaseModel):
     output_format: str = "json"
     enable_contact_discovery: bool = True
     enable_social_discovery: bool = False
+    outreach_policy_path: Optional[str] = None
+    outreach_store_path: str = "data/outreach.db"
+    outreach_export_dir: str = "output/outreach_campaigns"
+    outreach_execution_mode: str = "export-only"
+    outreach_daily_send_limit: int = 50
+    outreach_policy_version: str = "strict-email-first-v1"
+    outreach_sender_profile: Dict[str, object] = PydanticField(default_factory=dict)
 
 
 class RawBusinessRecord(BaseModel):
@@ -247,6 +254,19 @@ class BusinessLead:
     # Email guessing (MX-verified, not scraped)
     guessed_email: Optional[str] = None
 
+    # Outreach decision support
+    contact_provenance: Dict[str, str] = field(default_factory=dict)
+    email_eligibility: Optional[str] = None
+    email_eligibility_reason: Optional[str] = None
+    outreach_policy_decision: Optional[str] = None
+    outreach_policy_reason: Optional[str] = None
+    outreach_policy_version: Optional[str] = None
+    offer_type: Optional[str] = None
+    email_subject: Optional[str] = None
+    email_opening: Optional[str] = None
+    email_cta: Optional[str] = None
+    email_body_preview: Optional[str] = None
+
     def to_json(self) -> Dict:
         """Convert the dataclass into a serialisable dict matching the JSON schema."""
         return {
@@ -300,4 +320,15 @@ class BusinessLead:
             "contact_form_urls": self.contact_form_urls,
             "primary_contact_method": self.primary_contact_method,
             "guessed_email": self.guessed_email,
+            "contact_provenance": self.contact_provenance,
+            "email_eligibility": self.email_eligibility,
+            "email_eligibility_reason": self.email_eligibility_reason,
+            "outreach_policy_decision": self.outreach_policy_decision,
+            "outreach_policy_reason": self.outreach_policy_reason,
+            "outreach_policy_version": self.outreach_policy_version,
+            "offer_type": self.offer_type,
+            "email_subject": self.email_subject,
+            "email_opening": self.email_opening,
+            "email_cta": self.email_cta,
+            "email_body_preview": self.email_body_preview,
         }

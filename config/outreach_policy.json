@@ -1,0 +1,30 @@
+{
+  "version": "strict-email-first-v1",
+  "default": {
+    "email": {
+      "scraped": "allowed",
+      "json_ld": "allowed",
+      "social": "review_required",
+      "guessed": "blocked",
+      "manual": "review_required",
+      "unknown": "review_required"
+    }
+  },
+  "countries": {
+    "Spain": {
+      "email": {
+        "manual": "review_required"
+      }
+    },
+    "Portugal": {
+      "email": {
+        "manual": "review_required"
+      }
+    },
+    "Netherlands": {
+      "email": {
+        "manual": "review_required"
+      }
+    }
+  }
+}

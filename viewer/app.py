@@ -12,15 +12,32 @@ Launch:
 from __future__ import annotations
 
 import io
+import json
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 
+from src.enums import CampaignExecutionMode, WebsiteStatus
+from src.models import BusinessLead
+from src.outreach import (
+    OutreachStore,
+    SenderProfile,
+    approve_campaign_item,
+    create_campaign_draft,
+    execute_campaign,
+    manually_suppress_contact,
+    preflight_sender_profile,
+    record_campaign_feedback,
+    stable_lead_id,
+)
+
 # ── Constants ────────────────────────────────────────────────────────────────
 
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_DATA_FILE = str(ROOT / "output" / "leads.json")
+DEFAULT_OUTREACH_DB = str(ROOT / "data" / "outreach.db")
+DEFAULT_OUTREACH_EXPORT_DIR = str(ROOT / "output" / "outreach_campaigns")
 
 SCORE_COLS = [
     "business_strength_score",
@@ -100,6 +117,150 @@ def load_leads(path: str) -> pd.DataFrame:
         raw = raw.sort_values("lead_priority_score", ascending=False).reset_index(drop=True)
 
     return raw
+
+
+@st.cache_resource(show_spinner=False)
+def load_outreach_store(path: str) -> OutreachStore:
+    """Open the local outreach SQLite store."""
+    return OutreachStore(path)
+
+
+def _row_to_list(value) -> list[str]:
+    if isinstance(value, list):
+        return [str(item) for item in value]
+    if value is None or (isinstance(value, float) and pd.isna(value)):
+        return []
+    return [str(value)]
+
+
+def _row_to_optional_str(value) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, float) and pd.isna(value):
+        return None
+    text = str(value).strip()
+    return text or None
+
+
+def _row_contact_provenance(row: pd.Series) -> dict[str, str]:
+    provenance: dict[str, str] = {}
+    for key, value in row.items():
+        if key.startswith("contact_provenance.") and value is not None and not pd.isna(value):
+            provenance[key.split(".", 1)[1]] = str(value)
+    return provenance
+
+
+def _row_to_business_lead(row: pd.Series) -> BusinessLead:
+    status_raw = _row_to_optional_str(row.get("website_status")) or WebsiteStatus.UNKNOWN.value
+    lead = BusinessLead(
+        company_name=_row_to_optional_str(row.get("company_name")) or "",
+        niche=_row_to_optional_str(row.get("niche")) or "",
+        city=_row_to_optional_str(row.get("city")) or "",
+        country=_row_to_optional_str(row.get("country")) or "",
+        place_id=_row_to_optional_str(row.get("place_id")),
+        address=_row_to_optional_str(row.get("address")),
+        phone=_row_to_optional_str(row.get("phone")),
+        email=_row_to_optional_str(row.get("email")),
+        google_rating=row.get("google_rating"),
+        google_reviews_count=row.get("google_reviews_count"),
+        website_url=_row_to_optional_str(row.get("website_url")),
+        website_status=WebsiteStatus(status_raw),
+    )
+    lead.primary_email = _row_to_optional_str(row.get("primary_email"))
+    lead.all_emails = _row_to_list(row.get("all_emails"))
+    lead.primary_phone = _row_to_optional_str(row.get("primary_phone"))
+    lead.all_phones = _row_to_list(row.get("all_phones"))
+    lead.whatsapp_links = _row_to_list(row.get("whatsapp_links"))
+    lead.messenger_links = _row_to_list(row.get("messenger_links"))
+    lead.booking_links = _row_to_list(row.get("booking_links"))
+    lead.contact_form_urls = _row_to_list(row.get("contact_form_urls"))
+    lead.primary_contact_method = _row_to_optional_str(row.get("primary_contact_method"))
+    lead.guessed_email = _row_to_optional_str(row.get("guessed_email"))
+    lead.issues_found = _row_to_list(row.get("issues_found"))
+    lead.improvement_opportunities = _row_to_list(row.get("improvement_opportunities"))
+    lead.outreach_angle = _row_to_optional_str(row.get("outreach_angle")) or ""
+    lead.short_pitch = _row_to_optional_str(row.get("short_pitch")) or ""
+    lead.contact_provenance = _row_contact_provenance(row)
+    lead.email_eligibility = _row_to_optional_str(row.get("email_eligibility"))
+    lead.email_eligibility_reason = _row_to_optional_str(row.get("email_eligibility_reason"))
+    lead.outreach_policy_decision = _row_to_optional_str(row.get("outreach_policy_decision"))
+    lead.outreach_policy_reason = _row_to_optional_str(row.get("outreach_policy_reason"))
+    lead.outreach_policy_version = _row_to_optional_str(row.get("outreach_policy_version"))
+    lead.offer_type = _row_to_optional_str(row.get("offer_type"))
+    lead.email_subject = _row_to_optional_str(row.get("email_subject"))
+    lead.email_opening = _row_to_optional_str(row.get("email_opening"))
+    lead.email_cta = _row_to_optional_str(row.get("email_cta"))
+    lead.email_body_preview = _row_to_optional_str(row.get("email_body_preview"))
+    return lead
+
+
+def _sendability_reason(row: pd.Series) -> str:
+    if bool(row.get("suppressed", False)):
+        return f"Suppressed: {_row_to_optional_str(row.get('suppression_reason')) or 'suppression list'}"
+    if _row_to_optional_str(row.get("email_eligibility")) == "blocked":
+        return _row_to_optional_str(row.get("email_eligibility_reason")) or "Blocked"
+    if _row_to_optional_str(row.get("outreach_policy_decision")) == "blocked":
+        return _row_to_optional_str(row.get("outreach_policy_reason")) or "Blocked by policy"
+    if _row_to_optional_str(row.get("outreach_policy_decision")) == "review_required":
+        return _row_to_optional_str(row.get("outreach_policy_reason")) or "Policy review required"
+    if _row_to_optional_str(row.get("approval_state")) != "approved":
+        return "Needs approval"
+    return "Sendable"
+
+
+def enrich_for_outreach(df: pd.DataFrame, store: OutreachStore) -> pd.DataFrame:
+    """Merge mutable outreach state from SQLite into the static leads dataset."""
+    if df.empty:
+        return df.copy()
+
+    enriched = df.copy()
+    enriched["lead_id"] = enriched.apply(
+        lambda row: stable_lead_id(_row_to_business_lead(row)),
+        axis=1,
+    )
+
+    suppressions = {
+        (str(item["channel"]), str(item["contact_value"])): item
+        for item in store.list_suppressions()
+    }
+    items_by_lead: dict[str, dict] = {}
+    for campaign in store.list_campaigns():
+        for item in store.list_campaign_items(campaign["campaign_id"]):
+            items_by_lead[item["lead_id"]] = item
+
+    def _contact_email(row: pd.Series) -> str | None:
+        return (
+            _row_to_optional_str(row.get("primary_email"))
+            or _row_to_optional_str(row.get("email"))
+            or _row_to_optional_str(row.get("guessed_email"))
+        )
+
+    enriched["outreach_email"] = enriched.apply(_contact_email, axis=1)
+    enriched["email_provenance"] = enriched.get("contact_provenance.email", pd.Series(index=enriched.index)).fillna("")
+    enriched["suppression_reason"] = ""
+    enriched["suppressed"] = False
+    enriched["campaign_id"] = ""
+    enriched["approval_state"] = ""
+    enriched["campaign_item_id"] = ""
+    enriched["approved_by"] = ""
+    enriched["approved_at"] = ""
+
+    for idx, row in enriched.iterrows():
+        email = row.get("outreach_email")
+        suppression = suppressions.get(("email", str(email))) if email else None
+        if suppression:
+            enriched.at[idx, "suppressed"] = True
+            enriched.at[idx, "suppression_reason"] = suppression.get("reason", "")
+        item = items_by_lead.get(str(row.get("lead_id")))
+        if item:
+            enriched.at[idx, "campaign_id"] = item.get("campaign_id", "")
+            enriched.at[idx, "approval_state"] = item.get("state", "")
+            enriched.at[idx, "campaign_item_id"] = item.get("item_id", "")
+            enriched.at[idx, "approved_by"] = item.get("approved_by", "") or ""
+            enriched.at[idx, "approved_at"] = item.get("approved_at", "") or ""
+
+    enriched["sendability_reason"] = enriched.apply(_sendability_reason, axis=1)
+    return enriched
 
 
 # ── Sidebar ───────────────────────────────────────────────────────────────────
@@ -518,6 +679,250 @@ def _render_reachable_tab(reachable: pd.DataFrame) -> None:
     render_export(reachable)
 
 
+def _render_outreach_workspace(outreach_df: pd.DataFrame, store: OutreachStore) -> None:
+    """Render the outreach-focused review and campaign operations workspace."""
+    st.subheader("Email-First Outreach Workspace")
+
+    if outreach_df.empty:
+        st.info("No leads available for outreach review with the current filters.")
+        return
+
+    total = len(outreach_df)
+    allowed = int((outreach_df["email_eligibility"] == "allowed").sum()) if "email_eligibility" in outreach_df.columns else 0
+    review_required = int((outreach_df["email_eligibility"] == "review_required").sum()) if "email_eligibility" in outreach_df.columns else 0
+    blocked = int((outreach_df["email_eligibility"] == "blocked").sum()) if "email_eligibility" in outreach_df.columns else 0
+    approved = int((outreach_df["approval_state"] == "approved").sum()) if "approval_state" in outreach_df.columns else 0
+
+    metric_cols = st.columns(5)
+    metric_cols[0].metric("Candidates", f"{total:,}")
+    metric_cols[1].metric("Allowed", f"{allowed:,}")
+    metric_cols[2].metric("Review Required", f"{review_required:,}")
+    metric_cols[3].metric("Blocked", f"{blocked:,}")
+    metric_cols[4].metric("Approved", f"{approved:,}")
+
+    workspace = outreach_df.copy()
+    sendable_mask = (
+        (workspace.get("email_eligibility") == "allowed")
+        & (workspace.get("outreach_policy_decision") == "allowed")
+        & (~workspace.get("suppressed", False))
+    )
+    workspace = workspace[workspace["outreach_email"].notna()].copy()
+    workspace["sendable_now"] = sendable_mask.loc[workspace.index]
+
+    display_cols = [
+        "company_name",
+        "niche",
+        "city",
+        "country",
+        "outreach_email",
+        "email_provenance",
+        "email_eligibility",
+        "outreach_policy_decision",
+        "suppressed",
+        "approval_state",
+        "offer_type",
+        "sendability_reason",
+        "campaign_id",
+    ]
+    display = workspace[[col for col in display_cols if col in workspace.columns]].rename(
+        columns={
+            "company_name": "Company",
+            "niche": "Niche",
+            "city": "City",
+            "country": "Country",
+            "outreach_email": "Email",
+            "email_provenance": "Provenance",
+            "email_eligibility": "Eligibility",
+            "outreach_policy_decision": "Policy",
+            "suppressed": "Suppressed",
+            "approval_state": "Approval",
+            "offer_type": "Offer",
+            "sendability_reason": "Sendability Reason",
+            "campaign_id": "Campaign",
+        }
+    )
+    st.dataframe(display, width="stretch", hide_index=True)
+
+    control_col, campaign_col = st.columns([1.3, 1.0])
+    with control_col:
+        st.markdown("#### Draft Review")
+        company_options = [
+            f"{row.company_name} | {row.city} | {row.outreach_email}"
+            for row in workspace.itertuples(index=False)
+        ]
+        if not company_options:
+            st.info("No outreach-usable email rows after filtering.")
+            return
+
+        selected_label = st.selectbox("Lead", options=company_options, key="outreach_selected_label")
+        selected_row = workspace.iloc[company_options.index(selected_label)]
+        selected_lead = _row_to_business_lead(selected_row)
+
+        st.caption(selected_row.get("sendability_reason", ""))
+        st.write(f"**Eligibility:** {selected_row.get('email_eligibility', '—')}")
+        st.write(f"**Policy:** {selected_row.get('outreach_policy_decision', '—')} — {selected_row.get('outreach_policy_reason', '—')}")
+        st.write(f"**Provenance:** {selected_row.get('email_provenance', '—')}")
+        st.write(f"**Suppression:** {'yes' if bool(selected_row.get('suppressed', False)) else 'no'}")
+
+        offer_override = st.selectbox(
+            "Offer Type Override",
+            options=["new-website", "website-improvement"],
+            index=0 if selected_row.get("offer_type") == "new-website" else 1,
+            key="outreach_offer_override",
+        )
+        st.markdown(f"**Subject:** {selected_row.get('email_subject', '—')}")
+        st.markdown(f"**Opening:** {selected_row.get('email_opening', '—')}")
+        st.markdown(f"**CTA:** {selected_row.get('email_cta', '—')}")
+        st.text_area(
+            "Body Preview",
+            value=_row_to_optional_str(selected_row.get("email_body_preview")) or "",
+            height=140,
+            disabled=True,
+            key="outreach_body_preview",
+        )
+
+        campaign_id = st.text_input("Campaign ID", value="campaign-review", key="outreach_campaign_id")
+        actor = st.text_input("Operator", value="operator", key="outreach_actor")
+
+        create_disabled = (
+            selected_row.get("email_eligibility") != "allowed"
+            or bool(selected_row.get("suppressed", False))
+        )
+        if st.button("Create Draft For Lead", disabled=create_disabled, key="outreach_create_draft"):
+            create_campaign_draft(
+                store,
+                [selected_lead],
+                campaign_id=campaign_id,
+                created_by=actor,
+                sender_profile=SenderProfile(profile_name="viewer-default"),
+                execution_mode=CampaignExecutionMode.EXPORT_ONLY.value,
+                title=campaign_id,
+            )
+            st.cache_data.clear()
+            st.rerun()
+
+        item_id = selected_row.get("campaign_item_id") or f"{campaign_id}:{selected_row.get('lead_id')}"
+        approve_disabled = (
+            selected_row.get("email_eligibility") != "allowed"
+            or bool(selected_row.get("suppressed", False))
+        )
+        if st.button("Approve Draft", disabled=approve_disabled, key="outreach_approve"):
+            approve_campaign_item(
+                store,
+                item_id,
+                actor=actor,
+                lead=selected_lead,
+                offer_type=offer_override,
+            )
+            st.cache_data.clear()
+            st.rerun()
+
+        suppression_reason = st.text_input("Manual Suppression Reason", value="manual review", key="outreach_suppression_reason")
+        if st.button("Suppress Email", key="outreach_suppress") and selected_row.get("outreach_email"):
+            manually_suppress_contact(
+                store,
+                actor=actor,
+                channel="email",
+                contact_value=str(selected_row.get("outreach_email")),
+                reason=suppression_reason,
+                lead_id=str(selected_row.get("lead_id")),
+            )
+            st.cache_data.clear()
+            st.rerun()
+
+    with campaign_col:
+        st.markdown("#### Campaign Actions")
+        campaigns = store.list_campaigns()
+        campaign_options = [item["campaign_id"] for item in campaigns] or [campaign_id]
+        selected_campaign = st.selectbox(
+            "Campaign",
+            options=campaign_options,
+            index=campaign_options.index(campaign_id) if campaign_id in campaign_options else 0,
+            key="outreach_selected_campaign",
+        )
+        campaign_items = store.list_campaign_items(selected_campaign)
+        approved_items = [item for item in campaign_items if item.get("state") == "approved"]
+
+        sender_profile = SenderProfile(
+            profile_name=st.text_input("Sender Profile", value="default", key="outreach_sender_profile"),
+            mode=st.selectbox(
+                "Execution Mode",
+                options=[
+                    CampaignExecutionMode.DRY_RUN.value,
+                    CampaignExecutionMode.EXPORT_ONLY.value,
+                    CampaignExecutionMode.DIRECT_SEND.value,
+                ],
+                index=1,
+                key="outreach_mode",
+            ),
+            from_name=st.text_input("From Name", value="", key="outreach_from_name") or None,
+            from_email=st.text_input("From Email", value="", key="outreach_from_email") or None,
+            reply_to=st.text_input("Reply-To", value="", key="outreach_reply_to") or None,
+            smtp_host=st.text_input("SMTP Host", value="", key="outreach_smtp_host") or None,
+            smtp_username=st.text_input("SMTP Username", value="", key="outreach_smtp_username") or None,
+            smtp_password=st.text_input("SMTP Password", value="", type="password", key="outreach_smtp_password") or None,
+            daily_send_limit=int(st.number_input("Daily Send Limit", min_value=1, value=50, step=1, key="outreach_daily_cap")),
+        )
+        export_dir = st.text_input("Export Directory", value=DEFAULT_OUTREACH_EXPORT_DIR, key="outreach_export_dir")
+
+        preflight_ok, missing = preflight_sender_profile(sender_profile, mode=sender_profile.mode)
+        st.caption(
+            "Direct-send preflight: "
+            + ("ready" if preflight_ok else f"missing {', '.join(missing)}")
+        )
+        st.write(f"Approved items in batch: {len(approved_items)}")
+
+        execute_disabled = (
+            not approved_items
+            or (
+                sender_profile.mode == CampaignExecutionMode.DIRECT_SEND.value
+                and not preflight_ok
+            )
+        )
+        if st.button("Execute Campaign", disabled=execute_disabled, key="outreach_execute"):
+            result = execute_campaign(
+                store,
+                selected_campaign,
+                actor=actor,
+                sender_profile=sender_profile,
+                mode=sender_profile.mode,
+                output_dir=export_dir,
+            )
+            if result.get("ok"):
+                st.success(str(result))
+            else:
+                st.warning(str(result))
+            st.cache_data.clear()
+            st.rerun()
+
+        st.markdown("#### Feedback & Outcomes")
+        if campaign_items:
+            item_options = [item["item_id"] for item in campaign_items]
+            feedback_item_id = st.selectbox("Campaign Item", options=item_options, key="outreach_feedback_item")
+            feedback_outcome = st.selectbox(
+                "Outcome",
+                options=["reply", "bounce", "opt_out", "failed"],
+                key="outreach_feedback_outcome",
+            )
+            feedback_note = st.text_input("Outcome Note", value="", key="outreach_feedback_note")
+            if st.button("Record Outcome", key="outreach_record_outcome"):
+                record_campaign_feedback(
+                    store,
+                    feedback_item_id,
+                    actor=actor,
+                    outcome=feedback_outcome,
+                    note=feedback_note,
+                )
+                st.cache_data.clear()
+                st.rerun()
+
+            audit_events = store.list_audit_events(entity_type="campaign", entity_id=selected_campaign)[:10]
+            if audit_events:
+                st.markdown("#### Recent Audit Events")
+                for event in audit_events:
+                    st.write(f"{event['created_at']} — {event['event_type']} — {event['actor']}")
+
+
 # ── Main ──────────────────────────────────────────────────────────────────────
 
 def main() -> None:
@@ -531,6 +936,7 @@ def main() -> None:
         st.cache_data.clear()
 
     data_path = st.session_state.get("_data_path", DEFAULT_DATA_FILE)
+    outreach_db_path = st.sidebar.text_input("Outreach DB", value=DEFAULT_OUTREACH_DB, key="_outreach_db_input")
 
     # --- Load ---
     p = Path(data_path)
@@ -539,6 +945,7 @@ def main() -> None:
         st.stop()
 
     df = load_leads(data_path)
+    store = load_outreach_store(outreach_db_path)
     if df.empty:
         st.warning("No leads found in the file.")
         st.stop()
@@ -552,10 +959,13 @@ def main() -> None:
     else:
         reachable = pd.DataFrame()
     reachable_count = len(reachable)
+    outreach_df = enrich_for_outreach(filtered, store)
+    outreach_count = len(outreach_df[outreach_df["outreach_email"].notna()]) if "outreach_email" in outreach_df.columns else 0
 
-    tab_all, tab_reachable = st.tabs([
+    tab_all, tab_reachable, tab_outreach = st.tabs([
         "All Leads",
         f"Reachable Leads ({reachable_count})",
+        f"Outreach Workspace ({outreach_count})",
     ])
 
     with tab_all:
@@ -570,6 +980,9 @@ def main() -> None:
 
     with tab_reachable:
         _render_reachable_tab(reachable)
+
+    with tab_outreach:
+        _render_outreach_workspace(outreach_df, store)
 
 
 if __name__ == "__main__":

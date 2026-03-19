@@ -88,3 +88,57 @@ class SocialPresenceStatus(str, Enum):
     FOUND_VIA_SEARCH = "FOUND_VIA_SEARCH"
     NOT_FOUND = "NOT_FOUND"
     UNKNOWN = "UNKNOWN"
+
+
+class ContactProvenance(str, Enum):
+    """Origin/provenance of a contact channel used for outreach decisions."""
+
+    SCRAPED = "scraped"
+    JSON_LD = "json_ld"
+    SOCIAL = "social"
+    GUESSED = "guessed"
+    MANUAL = "manual"
+    UNKNOWN = "unknown"
+
+
+class OutreachEligibility(str, Enum):
+    """Eligibility state for outbound outreach decisions."""
+
+    ALLOWED = "allowed"
+    REVIEW_REQUIRED = "review_required"
+    BLOCKED = "blocked"
+
+
+class PolicyDecision(str, Enum):
+    """Decision returned by outreach policy evaluation."""
+
+    ALLOWED = "allowed"
+    REVIEW_REQUIRED = "review_required"
+    BLOCKED = "blocked"
+
+
+class OfferType(str, Enum):
+    """Offer type used for outbound website sales emails."""
+
+    NEW_WEBSITE = "new-website"
+    WEBSITE_IMPROVEMENT = "website-improvement"
+
+
+class CampaignExecutionMode(str, Enum):
+    """Execution mode for outreach campaigns."""
+
+    DRY_RUN = "dry-run"
+    EXPORT_ONLY = "export-only"
+    DIRECT_SEND = "direct-send"
+
+
+class CampaignItemState(str, Enum):
+    """Lifecycle state for one lead inside an outreach campaign."""
+
+    DRAFT = "draft"
+    APPROVED = "approved"
+    SENT = "sent"
+    REPLIED = "replied"
+    BOUNCED = "bounced"
+    OPTED_OUT = "opted_out"
+    FAILED = "failed"

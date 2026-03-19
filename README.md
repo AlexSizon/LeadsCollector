@@ -10,7 +10,8 @@ AI-powered pipeline that discovers, audits, and scores SMB businesses in Europe 
 4. **Analyses** Instagram presence as a business-maturity indicator
 5. **Scores** each lead on four dimensions and produces a final `lead_priority_score`
 6. **Generates** evidence-based outreach angles and short pitches
-7. **Deduplicates** businesses across all queries before output
+7. **Classifies** email-first outreach eligibility with provenance and policy reasons
+8. **Deduplicates** businesses across all queries before output
 
 ## Output format
 
@@ -35,7 +36,20 @@ A JSON array of lead objects. Example:
   "issues_found": ["No visible CTA", "Missing meta description"],
   "improvement_opportunities": ["Add booking CTA", "Write meta descriptions"],
   "outreach_angle": "Strong review profile (214 reviews) but weak conversion infrastructure.",
-  "short_pitch": "You already have strong local demand and social proof. A mobile-first booking flow could convert more visitors into appointments."
+  "short_pitch": "You already have strong local demand and social proof. A mobile-first booking flow could convert more visitors into appointments.",
+  "contact_provenance": {
+    "email": "scraped"
+  },
+  "email_eligibility": "allowed",
+  "email_eligibility_reason": "scraped business email available",
+  "outreach_policy_decision": "allowed",
+  "outreach_policy_reason": "scraped email allowed by policy",
+  "outreach_policy_version": "strict-email-first-v1",
+  "offer_type": "website-improvement",
+  "email_subject": "Smile Studio Berlin: ideas to improve the current site",
+  "email_opening": "I noticed a few website issues that could make it harder for customers to contact or book with Smile Studio Berlin.",
+  "email_cta": "If useful, I can point out the top website fixes worth making first.",
+  "email_body_preview": "I noticed a few website issues that could make it harder for customers to contact or book with Smile Studio Berlin. You already have strong local demand and social proof. A mobile-first booking flow could convert more visitors into appointments. If useful, I can point out the top website fixes worth making first."
 }
 ```
 
@@ -112,11 +126,38 @@ You can also set defaults in config files:
 ```json
 {
   "terminal_verbosity": "normal",
-  "terminal_summary_every_queries": 5
+  "terminal_summary_every_queries": 5,
+  "outreach_policy_path": "config/outreach_policy.json",
+  "outreach_store_path": "data/outreach.db",
+  "outreach_export_dir": "output/outreach_campaigns",
+  "outreach_execution_mode": "export-only",
+  "outreach_daily_send_limit": 50,
+  "outreach_policy_version": "strict-email-first-v1",
+  "outreach_sender_profile": {
+    "profile_name": "default",
+    "from_email": "sales@example.com",
+    "reply_to": "sales@example.com",
+    "from_name": "Alex",
+    "mode": "export-only"
+  }
 }
 ```
 
 In `normal` mode, the transcript favors operator readability and emits city/final summaries, retry-aware query outcomes, and anomaly lines such as zero-result queries or unexpected website states.
+
+### 4a. Email-first outreach workflow
+
+The pipeline now enriches each lead with sendability-oriented fields:
+- `contact_provenance`
+- `email_eligibility` and `email_eligibility_reason`
+- `outreach_policy_decision`, `outreach_policy_reason`, `outreach_policy_version`
+- `offer_type`, `email_subject`, `email_opening`, `email_cta`, `email_body_preview`
+
+Mutable outreach operations live in a local SQLite store:
+- default path: `data/outreach.db`
+- export batches: `output/outreach_campaigns/`
+
+The Streamlit viewer exposes an outreach workspace backed by that store for draft review, approval, campaign batching, export, and feedback updates.
 
 ### 5. Run tests
 
@@ -164,14 +205,34 @@ src/
     exporter_json.py   # JSON array export
     exporter_csv.py    # CSV flat export
 
+  outreach/
+    policy.py          # Provenance + eligibility policy rules
+    generation.py      # Email-first draft field generation
+    store.py           # SQLite campaign/suppression state
+    workflow.py        # Draft, approval, export, and feedback helpers
+
   prompts/
     system_prompt.txt  # Agent system instructions
     outreach_prompt.txt # Task prompt template
 
 data/          # Output leads (gitignored)
+data/outreach.db # Local outreach campaign store
 logs/          # Run logs (gitignored)
 tests/         # Unit and smoke tests
 ```
+
+## Operator prerequisites for real sending
+
+Before enabling `direct-send`, you still need to provide and own:
+- a sender mailbox or ESP account
+- SMTP credentials or an ESP API integration
+- `SPF`, `DKIM`, and ideally `DMARC` for the sender domain
+- sender identity details: display name, from address, reply-to, and landing page/site
+- offer packaging: what you are selling, pricing approach, and CTA destination
+- compliance choices: allowed countries, guessed-email policy, and suppression owner
+- operating rules: daily send cap, approval owner, and bounce/opt-out handling process
+
+Without that setup, the safe default mode is `export-only`.
 
 ## Scoring formula
 

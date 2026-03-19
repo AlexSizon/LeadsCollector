@@ -54,6 +54,16 @@ from src.models import BusinessLead
 from src.enums import WebsiteStatus, InstagramStatus, MatchConfidence
 from src.output.exporter_json import export_json
 from src.output.exporter_csv import export_csv
+from src.outreach import (
+    build_contact_provenance,
+    classify_email_eligibility,
+    derive_offer_type,
+    generate_email_body_preview,
+    generate_email_cta,
+    generate_email_opening,
+    generate_email_subject,
+    load_policy_config,
+)
 from src.terminal_logging import NullTerminalLogger, TerminalRunLogger
 
 log = logging.getLogger(__name__)
@@ -61,6 +71,7 @@ log = logging.getLogger(__name__)
 # ── Config ───────────────────────────────────────────────────────────────────
 DEFAULT_CONFIG = str(ROOT / "config" / "run_europe_smb.json")
 LOG_DIR = ROOT / "logs"
+OUTREACH_POLICY_PATH = ROOT / "config" / "outreach_policy.json"
 
 
 def load_config(path: str) -> Dict:
@@ -124,6 +135,9 @@ def run_pipeline(
     )
     email_guesser: Optional[EmailGuesser] = (
         EmailGuesser() if enable_email_guesser_flag else None
+    )
+    outreach_policy = load_policy_config(
+        config.get("outreach_policy_path") or str(OUTREACH_POLICY_PATH)
     )
 
     # Load city attractiveness weights
@@ -405,8 +419,7 @@ def run_pipeline(
                     )
 
                     # ── Outreach ─────────────────────────────────────────────
-                    lead.outreach_angle = _generate_outreach_angle(lead)
-                    lead.short_pitch    = _generate_short_pitch(lead)
+                    _apply_outreach_fields(lead, policy=outreach_policy)
 
                     emails_found = len({
                         email.lower()
@@ -510,6 +523,7 @@ def run_pipeline(
                                 social_lead.business_strength_score,
                                 social_lead.website_status.value,
                             )
+                            _apply_outreach_fields(social_lead, policy=outreach_policy)
                             leads.append(social_lead)
 
             terminal.city_complete(
@@ -541,6 +555,39 @@ def run_pipeline(
 # (Rule-based, adapted from pipeline.py)
 
 _BOOKING_NICHES = {"restaurant", "beauty salon", "bakery", "florist"}
+
+
+def _apply_outreach_fields(
+    lead: BusinessLead,
+    *,
+    policy: Dict,
+    jld: Optional[Dict] = None,
+    suppressed: bool = False,
+) -> None:
+    """Populate eligibility, provenance, and email draft fields."""
+    lead.outreach_angle = _generate_outreach_angle(lead)
+    lead.short_pitch = _generate_short_pitch(lead)
+    lead.contact_provenance = build_contact_provenance(lead, jld=jld)
+
+    eligibility, eligibility_reason, policy_decision, policy_reason, policy_version = (
+        classify_email_eligibility(
+            lead,
+            policy=policy,
+            suppressed=suppressed,
+        )
+    )
+    lead.email_eligibility = eligibility.value
+    lead.email_eligibility_reason = eligibility_reason
+    lead.outreach_policy_decision = policy_decision.value
+    lead.outreach_policy_reason = policy_reason
+    lead.outreach_policy_version = policy_version
+
+    offer_type = derive_offer_type(lead)
+    lead.offer_type = offer_type.value
+    lead.email_subject = generate_email_subject(lead)
+    lead.email_opening = generate_email_opening(lead)
+    lead.email_cta = generate_email_cta(lead)
+    lead.email_body_preview = generate_email_body_preview(lead)
 
 def _generate_outreach_angle(lead: BusinessLead) -> str:
     parts: List[str] = []
