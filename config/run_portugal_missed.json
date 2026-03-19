@@ -1,0 +1,41 @@
+{
+  "_comment": "Supplemental run — Portugal cities missed due to Nominatim timeouts in main run",
+  "_data_source": "OpenStreetMap Overpass API",
+
+  "countries": ["Portugal"],
+
+  "cities": ["Lisbon", "Braga", "Coimbra"],
+
+  "city_country_map": {
+    "Lisbon":  "Portugal",
+    "Braga":   "Portugal",
+    "Coimbra": "Portugal"
+  },
+
+  "niches": [
+    "restaurant",
+    "beauty salon",
+    "gift shop",
+    "florist",
+    "bakery",
+    "boutique",
+    "cosmetics shop",
+    "specialty food shop",
+    "pet shop",
+    "home decor shop",
+    "craft store"
+  ],
+
+  "max_results_per_query": 30,
+  "min_reviews_threshold": 0,
+  "min_rating_threshold": 0.0,
+  "include_instagram_analysis": true,
+  "run_website_audit": true,
+  "request_delay": 4.0,
+
+  "output": {
+    "json":    "output/leads_portugal_supplement.json",
+    "csv":     "output/leads_portugal_supplement.csv",
+    "summary": "output/run_summary_portugal.md"
+  }
+}

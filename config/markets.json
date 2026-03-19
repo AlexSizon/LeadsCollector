@@ -1,0 +1,12 @@
+{
+  "countries": ["Germany", "Spain", "Netherlands"],
+  "cities": ["Berlin", "Munich", "Madrid", "Barcelona", "Amsterdam"],
+  "niches": ["dentist", "barbershop", "beauty salon"],
+  "language_priority": ["en", "de", "es", "nl"],
+  "max_results_per_query": 50,
+  "min_reviews_threshold": 20,
+  "min_rating_threshold": 4.0,
+  "include_instagram_analysis": true,
+  "run_website_audit": true,
+  "output_format": "json"
+}

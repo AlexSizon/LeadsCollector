@@ -1,0 +1,53 @@
+{
+  "_comment": "OSM-based test run targeting roughly 200 leads for log validation",
+  "_data_source": "OpenStreetMap Overpass API",
+
+  "countries": ["Spain", "Portugal", "Netherlands"],
+
+  "cities": [
+    "Madrid",
+    "Barcelona",
+    "Lisbon",
+    "Porto",
+    "Amsterdam"
+  ],
+
+  "city_country_map": {
+    "Madrid": "Spain",
+    "Barcelona": "Spain",
+    "Lisbon": "Portugal",
+    "Porto": "Portugal",
+    "Amsterdam": "Netherlands"
+  },
+
+  "niches": [
+    "restaurant",
+    "beauty salon",
+    "bakery",
+    "florist",
+    "boutique"
+  ],
+
+  "language_priority": ["en", "es", "pt", "nl"],
+  "max_results_per_query": 10,
+  "min_reviews_threshold": 0,
+  "min_rating_threshold": 0.0,
+
+  "include_instagram_analysis": true,
+  "run_website_audit": true,
+
+  "enable_social_discovery": false,
+  "enable_contact_discovery": true,
+  "enable_tripadvisor_discovery": false,
+  "enable_email_guesser": false,
+  "social_request_delay": 2.0,
+  "request_delay": 1.5,
+
+  "output_format": "json",
+
+  "output": {
+    "json": "output/log_test_200.json",
+    "csv": "output/log_test_200.csv",
+    "summary": "output/log_test_200_summary.md"
+  }
+}

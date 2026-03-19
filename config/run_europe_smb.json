@@ -1,0 +1,74 @@
+{
+  "_comment": "Europe SMB lead discovery run — Spain / Netherlands / Portugal",
+  "_data_source": "OpenStreetMap Overpass API (Google Places API key not configured)",
+
+  "countries": ["Spain", "Netherlands", "Portugal"],
+
+  "cities": [
+    "Madrid", "Barcelona", "Valencia", "Seville", "Malaga",
+    "Amsterdam", "Rotterdam", "Utrecht", "The Hague", "Eindhoven",
+    "Lisbon", "Porto", "Braga", "Faro", "Coimbra"
+  ],
+
+  "city_country_map": {
+    "Madrid":      "Spain",
+    "Barcelona":   "Spain",
+    "Valencia":    "Spain",
+    "Seville":     "Spain",
+    "Malaga":      "Spain",
+    "Amsterdam":   "Netherlands",
+    "Rotterdam":   "Netherlands",
+    "Utrecht":     "Netherlands",
+    "The Hague":   "Netherlands",
+    "Eindhoven":   "Netherlands",
+    "Lisbon":      "Portugal",
+    "Porto":       "Portugal",
+    "Braga":       "Portugal",
+    "Faro":        "Portugal",
+    "Coimbra":     "Portugal"
+  },
+
+  "niches": [
+    "restaurant",
+    "beauty salon",
+    "beauty studio",
+    "gift shop",
+    "florist",
+    "bakery",
+    "boutique",
+    "cosmetics shop",
+    "specialty food shop",
+    "pet shop",
+    "home decor shop",
+    "craft store"
+  ],
+
+  "language_priority": ["en", "es", "nl", "pt"],
+
+  "max_results_per_query": 30,
+
+  "min_reviews_threshold": 0,
+  "_min_reviews_note": "Set to 0 for OSM data source — OSM has no review counts",
+
+  "min_rating_threshold": 0.0,
+  "_min_rating_note": "Set to 0.0 for OSM data source — OSM has no rating data",
+
+  "include_instagram_analysis": true,
+  "run_website_audit": true,
+
+  "enable_social_discovery": true,
+  "enable_contact_discovery": true,
+  "enable_tripadvisor_discovery": true,
+  "enable_email_guesser": true,
+  "social_request_delay": 3.0,
+
+  "output_format": "json",
+
+  "request_delay": 3.0,
+
+  "output": {
+    "json": "output/leads.json",
+    "csv":  "output/leads.csv",
+    "summary": "output/run_summary.md"
+  }
+}

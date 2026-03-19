@@ -1,0 +1,24 @@
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# Virtual environments
+.venv/
+venv/
+
+# IDE / local tooling
+.vscode/
+.agent/
+.claude/
+.codex/
+.gemini/
+
+# Generated pipeline artifacts
+logs/
+output/
+
+# Local data scratch
+data/

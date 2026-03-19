@@ -1,0 +1,40 @@
+Analyze SMB businesses in the target European markets.
+
+Inputs:
+- countries: {countries}
+- cities: {cities}
+- niches: {niches}
+- minimum reviews: {min_reviews_threshold}
+- minimum rating: {min_rating_threshold}
+
+For each business:
+1. Collect core business metadata.
+2. Determine whether the business has a website.
+3. If a website exists, audit it for technical, SEO, UX, and conversion issues.
+4. Look for Instagram/business activity signals.
+5. Score the lead quality and urgency.
+6. Return structured output with issues, opportunities, outreach angle, and pitch.
+
+Prioritize businesses that:
+- have strong local demand signals
+- lack a website
+- have a broken or weak website
+- show active social/business presence
+- would clearly benefit from conversion-focused improvements
+
+Outreach angle formula:
+  [Current business strength signal] + [observed website gap] + [specific opportunity]
+
+Examples of good outreach angles:
+- "Strong review profile (N reviews) but no owned website presence."
+- "Active local business with weak mobile conversion flow."
+- "Good reputation and active Instagram, but no clear booking path."
+- "Established business with outdated site structure and weak local SEO basics."
+
+Short pitch constraints:
+- 1–3 sentences only.
+- No hyperbole, pressure language, or invented facts.
+- Reference a concrete, niche-relevant benefit.
+- Do NOT use: "losing money", "urgent", "immediately", "you must".
+
+Return JSON array output only.

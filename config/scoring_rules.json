@@ -1,0 +1,99 @@
+{
+  "_comment": "Scoring weights and tuning parameters for the SMB lead scoring pipeline",
+
+  "final_score_weights": {
+    "business_strength": 0.30,
+    "website_problem": 0.30,
+    "commercial_opportunity": 0.25,
+    "instagram_signal": 0.05,
+    "contactability": 0.10
+  },
+
+  "business_strength": {
+    "rating_max_points": 50,
+    "review_max_points": 50,
+    "review_saturation_count": 100,
+    "null_input_default_score": 20,
+    "low_reviews_cap": {
+      "threshold": 10,
+      "max_score": 40
+    }
+  },
+
+  "website_problem": {
+    "base_scores": {
+      "NO_WEBSITE": 85,
+      "SOCIAL_ONLY": 70,
+      "BROKEN_WEBSITE": 80,
+      "HAS_WEBSITE": 40,
+      "UNKNOWN": 50
+    },
+    "issue_points_each": 3,
+    "issue_bonus_cap": 15
+  },
+
+  "commercial_opportunity": {
+    "base_score": 45,
+    "niche_bonus": 15,
+    "no_or_broken_website_bonus": 25,
+    "social_only_bonus": 20,
+    "has_website_bonus": 10,
+    "active_instagram_no_website_bonus": 20,
+    "active_instagram_weak_site_bonus": 10,
+    "high_demand_niches": [
+      "dentist",
+      "beauty salon",
+      "barbershop",
+      "physiotherapy",
+      "hotel"
+    ]
+  },
+
+  "instagram_signal": {
+    "scores": {
+      "NOT_FOUND": 0,
+      "FOUND_INACTIVE": 20,
+      "FOUND_ACTIVE": 60,
+      "FOUND_ACTIVE_WITH_LINK": 80,
+      "UNKNOWN": 30
+    }
+  },
+
+  "tier_thresholds": {
+    "tier_1": {
+      "min_business_strength": 65,
+      "website_status_in": ["NO_WEBSITE", "BROKEN_WEBSITE"]
+    },
+    "tier_2": {
+      "min_lead_priority": 55
+    },
+    "tier_3": {
+      "min_lead_priority": 35
+    }
+  },
+
+  "priority_boosters": {
+    "reviews_count_threshold": 50,
+    "rating_threshold": 4.3,
+    "boost_when_no_website": true,
+    "boost_when_active_instagram": true
+  },
+
+  "city_attractiveness": {
+    "Berlin": 1.0,
+    "Munich": 1.05,
+    "Hamburg": 0.95,
+    "Madrid": 0.95,
+    "Barcelona": 1.0,
+    "Amsterdam": 1.05,
+    "Vienna": 1.0,
+    "Zurich": 1.1,
+    "Paris": 1.1,
+    "Rome": 0.9,
+    "default": 0.85
+  },
+
+  "deduplication": {
+    "name_city_similarity_threshold": 0.90
+  }
+}

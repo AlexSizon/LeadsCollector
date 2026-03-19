@@ -1,0 +1,92 @@
+{
+  "niches": {
+    "dentist": {
+      "label": "Dentist",
+      "category_keywords": ["dentist", "dental_clinic", "oral_care"],
+      "local_demand_weight": 0.9,
+      "booking_critical": true
+    },
+    "barbershop": {
+      "label": "Barbershop",
+      "category_keywords": ["hair_care", "barber", "barbershop"],
+      "local_demand_weight": 0.85,
+      "booking_critical": true
+    },
+    "beauty salon": {
+      "label": "Beauty Salon",
+      "category_keywords": ["beauty_salon", "hair_salon", "nail_salon", "spa"],
+      "local_demand_weight": 0.85,
+      "booking_critical": true
+    },
+    "physiotherapy": {
+      "label": "Physiotherapy",
+      "category_keywords": ["physiotherapist", "physical_therapy"],
+      "local_demand_weight": 0.85,
+      "booking_critical": true
+    },
+    "restaurant": {
+      "label": "Restaurant",
+      "category_keywords": ["restaurant", "food", "meal_takeaway"],
+      "local_demand_weight": 0.75,
+      "booking_critical": false
+    },
+    "hotel": {
+      "label": "Hotel",
+      "category_keywords": ["lodging", "hotel"],
+      "local_demand_weight": 0.8,
+      "booking_critical": true
+    },
+    "lawyer": {
+      "label": "Lawyer",
+      "category_keywords": ["lawyer", "legal_services"],
+      "local_demand_weight": 0.7,
+      "booking_critical": true
+    },
+    "accountant": {
+      "label": "Accountant",
+      "category_keywords": ["accountant", "finance"],
+      "local_demand_weight": 0.65,
+      "booking_critical": false
+    },
+    "gym": {
+      "label": "Gym / Fitness",
+      "category_keywords": ["gym", "fitness_center", "sports_complex"],
+      "local_demand_weight": 0.8,
+      "booking_critical": false
+    },
+    "tattoo": {
+      "label": "Tattoo Studio",
+      "category_keywords": ["tattoo_shop"],
+      "local_demand_weight": 0.75,
+      "booking_critical": true
+    }
+  },
+  "high_demand_niches": [
+    "dentist",
+    "beauty salon",
+    "barbershop",
+    "physiotherapy",
+    "hotel"
+  ],
+  "category_mapping": {
+    "dentist": "dentist",
+    "dental_clinic": "dentist",
+    "hair_care": "barbershop",
+    "barber": "barbershop",
+    "hair_salon": "beauty salon",
+    "beauty_salon": "beauty salon",
+    "nail_salon": "beauty salon",
+    "spa": "beauty salon",
+    "physiotherapist": "physiotherapy",
+    "physical_therapy": "physiotherapy",
+    "restaurant": "restaurant",
+    "lodging": "hotel",
+    "hotel": "hotel",
+    "lawyer": "lawyer",
+    "legal_services": "lawyer",
+    "accountant": "accountant",
+    "gym": "gym",
+    "fitness_center": "gym",
+    "tattoo_shop": "tattoo"
+  }
+}

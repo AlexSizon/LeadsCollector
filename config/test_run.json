@@ -1,0 +1,33 @@
+{
+  "_comment": "Minimal test run — all features enabled, 1 city, 1 niche, fast",
+
+  "countries": ["Spain"],
+  "cities": ["Madrid"],
+  "city_country_map": {
+    "Madrid": "Spain"
+  },
+  "niches": ["restaurant"],
+
+  "language_priority": ["en", "es"],
+  "max_results_per_query": 5,
+  "min_reviews_threshold": 0,
+  "min_rating_threshold": 0.0,
+
+  "include_instagram_analysis": true,
+  "run_website_audit": true,
+
+  "enable_social_discovery": true,
+  "enable_contact_discovery": true,
+  "enable_tripadvisor_discovery": false,
+  "enable_email_guesser": false,
+  "social_request_delay": 1.0,
+
+  "output_format": "json",
+  "request_delay": 0.5,
+
+  "output": {
+    "json": "output/test_run.json",
+    "csv":  "output/test_run.csv",
+    "summary": "output/test_run_summary.md"
+  }
+}
