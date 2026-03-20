@@ -90,6 +90,8 @@ class InstagramDiscoveryCollector:
         city: str,
         country: str = "",
         max_results: int = 10,
+        *,
+        search_term: Optional[str] = None,
     ) -> List[SocialCandidate]:
         """Return a list of SocialCandidates discovered on Instagram.
 
@@ -97,7 +99,8 @@ class InstagramDiscoveryCollector:
         query, then fetches the top profiles to extract bio-level data.
         Falls back to empty list on any error.
         """
-        query = f'site:instagram.com "{niche}" "{city}"'
+        query_term = search_term or niche
+        query = f'site:instagram.com "{query_term}" "{city}"'
         log.debug("Instagram discovery search: %s", query)
 
         try:

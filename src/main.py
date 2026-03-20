@@ -19,6 +19,7 @@ from .logging_utils import generate_run_id
 from .pipeline import LeadPipeline
 from .output.exporter_json import export_json
 from .output.exporter_csv import export_csv
+from .search_vocabulary import build_search_variants, get_search_languages
 from .terminal_logging import TerminalRunLogger
 
 
@@ -82,10 +83,14 @@ def main():
     run_id = generate_run_id()
     terminal_verbosity = args.terminal_verbosity or config.get("terminal_verbosity", "normal")
     terminal_summary_every_queries = config.get("terminal_summary_every_queries", 5)
+    search_languages = get_search_languages(config)
     total_queries = (
         len(config.get("countries", []))
         * len(config.get("cities", []))
-        * len(config.get("niches", []))
+        * sum(
+            len(build_search_variants(niche, search_languages))
+            for niche in config.get("niches", [])
+        )
     )
 
     with TerminalRunLogger(

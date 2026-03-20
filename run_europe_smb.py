@@ -51,6 +51,7 @@ from src.enrichment.cross_source_matcher import CrossSourceMatcher
 from src.enrichment.contact_discovery import ContactDiscovery
 from src.logging_utils import PipelineLogger, generate_run_id
 from src.models import BusinessLead
+from src.search_vocabulary import build_search_variants, get_search_languages
 from src.enums import WebsiteStatus, InstagramStatus, MatchConfidence
 from src.output.exporter_json import export_json
 from src.output.exporter_csv import export_csv
@@ -82,6 +83,8 @@ def run_pipeline(
     max_results      = config.get("max_results_per_query", 20)
     min_reviews      = config.get("min_reviews_threshold", 0)
     min_rating       = config.get("min_rating_threshold", 0.0)
+    response_languages = config.get("language_priority", ["en"])
+    search_languages = get_search_languages(config)
     include_ig       = config.get("include_instagram_analysis", False)
     run_audit        = config.get("run_website_audit", True)
     request_delay    = config.get("request_delay", 1.0)
@@ -140,7 +143,10 @@ def run_pipeline(
 
     total_cities = len(cities)
     total_niches = len(canonical_niches)
-    total_queries = total_cities * total_niches
+    total_queries = total_cities * sum(
+        len(build_search_variants(niche, search_languages))
+        for niche in canonical_niches
+    )
     query_count = 0
 
     try:
@@ -155,320 +161,356 @@ def run_pipeline(
             city_lead_start_count = len(leads)
 
             for niche in canonical_niches:
-                query_count += 1
-                query = f"{niche} in {city}"
-                terminal.query_start(index=query_count, total=total_queries, city=city, niche=niche)
-
-                _q_start = time.monotonic()
-                try:
-                    places = collector.search(
-                        query=query,
-                        max_results=max_results,
+                for search_language, search_label in build_search_variants(niche, search_languages):
+                    query_count += 1
+                    query = f"{search_label} in {city}"
+                    response_lang = response_languages[0] if response_languages else "en"
+                    terminal.query_start(
+                        index=query_count,
+                        total=total_queries,
                         city=city,
-                        country=country,
-                        niches=[niche],
+                        niche=niche,
+                        search_language=search_language,
                     )
-                except Exception as exc:
+
+                    _q_start = time.monotonic()
+                    try:
+                        places = collector.search(
+                            query=query,
+                            max_results=max_results,
+                            language=response_lang,
+                            city=city,
+                            country=country,
+                            niches=[niche],
+                        )
+                    except Exception as exc:
+                        logger.log_query(
+                            city,
+                            niche,
+                            source="overpass",
+                            result_count=0,
+                            duration_s=time.monotonic() - _q_start,
+                            search_language=search_language,
+                            error=str(exc),
+                        )
+                        terminal.query_result(
+                            city=city,
+                            niche=niche,
+                            search_language=search_language,
+                            source="overpass",
+                            result_count=0,
+                            duration_s=time.monotonic() - _q_start,
+                            status="upstream_error",
+                            retry_count=0,
+                            error=str(exc),
+                        )
+                        log.warning("Search failed for '%s': %s", query, exc)
+                        continue
+
+                    query_meta = getattr(collector, "last_query_meta", {})
+                    if not isinstance(query_meta, dict):
+                        query_meta = {}
+                    query_status = str(query_meta.get("status", "success" if places else "zero_results"))
+                    retry_count = int(query_meta.get("retry_count", 0))
+                    query_error = query_meta.get("error")
                     logger.log_query(
                         city,
                         niche,
                         source="overpass",
-                        result_count=0,
+                        result_count=len(places),
                         duration_s=time.monotonic() - _q_start,
-                        error=str(exc),
+                        search_language=search_language,
+                        error=query_error if query_status in {"upstream_error", "geocode_failed"} else None,
                     )
                     terminal.query_result(
                         city=city,
                         niche=niche,
+                        search_language=search_language,
                         source="overpass",
-                        result_count=0,
+                        result_count=len(places),
                         duration_s=time.monotonic() - _q_start,
-                        status="upstream_error",
-                        retry_count=0,
-                        error=str(exc),
+                        status=query_status,
+                        retry_count=retry_count,
+                        error=query_error if query_status in {"upstream_error", "geocode_failed"} else None,
                     )
-                    log.warning("Search failed for '%s': %s", query, exc)
-                    continue
 
-                query_meta = getattr(collector, "last_query_meta", {})
-                if not isinstance(query_meta, dict):
-                    query_meta = {}
-                query_status = str(query_meta.get("status", "success" if places else "zero_results"))
-                retry_count = int(query_meta.get("retry_count", 0))
-                query_error = query_meta.get("error")
-                logger.log_query(
-                    city,
-                    niche,
-                    source="overpass",
-                    result_count=len(places),
-                    duration_s=time.monotonic() - _q_start,
-                    error=query_error if query_status in {"upstream_error", "geocode_failed"} else None,
-                )
-                terminal.query_result(
-                    city=city,
-                    niche=niche,
-                    source="overpass",
-                    result_count=len(places),
-                    duration_s=time.monotonic() - _q_start,
-                    status=query_status,
-                    retry_count=retry_count,
-                    error=query_error if query_status in {"upstream_error", "geocode_failed"} else None,
-                )
+                    for place in places:
+                        osm_id = place.get("id", "")
+                        if osm_id in seen_osm_ids:
+                            continue
+                        seen_osm_ids.add(osm_id)
 
-                for place in places:
-                    osm_id = place.get("id", "")
-                    if osm_id in seen_osm_ids:
-                        continue
-                    seen_osm_ids.add(osm_id)
+                        # Basic filters
+                        rating = place.get("rating")
+                        reviews = place.get("userRatingCount")
+                        if rating is not None and rating < min_rating:
+                            continue
+                        if reviews is not None and reviews < min_reviews:
+                            continue
 
-                    # Basic filters
-                    rating  = place.get("rating")
-                    reviews = place.get("userRatingCount")
-                    if rating  is not None and rating  < min_rating:
-                        continue
-                    if reviews is not None and reviews < min_reviews:
-                        continue
+                        company_name = place.get("displayName", {}).get("text", "")
+                        if not company_name:
+                            continue
 
-                    company_name = place.get("displayName", {}).get("text", "")
-                    if not company_name:
-                        continue
+                        # Get full details (from cache — no extra HTTP)
+                        details = collector.get_place_details(osm_id)
+                        phone = details.get("internationalPhoneNumber")
+                        website = details.get("websiteUri")
+                        map_url = details.get("googleMapsUri")
+                        address = details.get("formattedAddress", "")
+                        assigned_niche = details.get("_niche", niche)
 
-                    # Get full details (from cache — no extra HTTP)
-                    details   = collector.get_place_details(osm_id)
-                    phone     = details.get("internationalPhoneNumber")
-                    website   = details.get("websiteUri")
-                    map_url   = details.get("googleMapsUri")
-                    address   = details.get("formattedAddress", "")
-                    assigned_niche = details.get("_niche", niche)
-
-                    _lead_start = time.monotonic()
-                    lead = BusinessLead(
-                        company_name=company_name,
-                        niche=assigned_niche,
-                        country=country,
-                        city=city,
-                        place_id=osm_id,
-                        address=address,
-                        phone=phone,
-                        google_rating=rating,
-                        google_reviews_count=reviews,
-                        website_url=website,
-                        map_url=map_url,
-                        lead_source="osm",
-                        source_platforms=["osm"],
-                    )
-                    terminal.lead_stage(
-                        company=company_name,
-                        stage="start",
-                        detail=f"city={city} niche={assigned_niche}",
-                    )
+                        _lead_start = time.monotonic()
+                        lead = BusinessLead(
+                            company_name=company_name,
+                            niche=assigned_niche,
+                            country=country,
+                            city=city,
+                            place_id=osm_id,
+                            address=address,
+                            phone=phone,
+                            google_rating=rating,
+                            google_reviews_count=reviews,
+                            website_url=website,
+                            map_url=map_url,
+                            lead_source="osm",
+                            source_platforms=["osm"],
+                        )
+                        terminal.lead_stage(
+                            company=company_name,
+                            stage="start",
+                            detail=f"city={city} niche={assigned_niche}",
+                        )
 
                     # ── Stage 3: Website presence ────────────────────────────
-                    website_response = None
-                    if website:
-                        try:
-                            status, website_response = website_checker.check_website(website)
-                        except Exception as exc:
-                            log.debug("Website check error for %s: %s", website, exc)
-                            status = WebsiteStatus.UNKNOWN
-                    else:
-                        status = WebsiteStatus.NO_WEBSITE
-                    lead.website_status = status
-                    terminal.lead_stage(
-                        company=company_name,
-                        stage="website",
-                        detail=f"status={status.value}",
-                    )
+                        website_response = None
+                        if website:
+                            try:
+                                status, website_response = website_checker.check_website(website)
+                            except Exception as exc:
+                                log.debug("Website check error for %s: %s", website, exc)
+                                status = WebsiteStatus.UNKNOWN
+                        else:
+                            status = WebsiteStatus.NO_WEBSITE
+                        lead.website_status = status
+                        terminal.lead_stage(
+                            company=company_name,
+                            stage="website",
+                            detail=f"status={status.value}",
+                        )
 
                     # ── Stage 3b: Website audit (HAS_WEBSITE only) ───────────
-                    issues: List[str] = []
-                    opps:   List[str] = []
-                    if run_audit and status == WebsiteStatus.HAS_WEBSITE and website_response is not None:
-                        try:
-                            html = website_response.text
-                            t_iss, t_opp = audit_technical(website, html, website_response)
-                            s_iss, s_opp = audit_seo(website, html)
-                            u_iss, u_opp = audit_ux(html)
-                            issues = t_iss + s_iss + u_iss
-                            opps   = t_opp + s_opp + u_opp
-                        except Exception as exc:
-                            log.debug("Audit error for %s: %s", website, exc)
-                    lead.issues_found = issues
-                    lead.improvement_opportunities = opps
-                    if run_audit:
-                        terminal.lead_stage(
-                            company=company_name,
-                            stage="audit",
-                            detail=f"issues={len(issues)} opportunities={len(opps)}",
-                        )
+                        issues: List[str] = []
+                        opps:   List[str] = []
+                        if run_audit and status == WebsiteStatus.HAS_WEBSITE and website_response is not None:
+                            try:
+                                html = website_response.text
+                                t_iss, t_opp = audit_technical(website, html, website_response)
+                                s_iss, s_opp = audit_seo(website, html)
+                                u_iss, u_opp = audit_ux(html)
+                                issues = t_iss + s_iss + u_iss
+                                opps   = t_opp + s_opp + u_opp
+                            except Exception as exc:
+                                log.debug("Audit error for %s: %s", website, exc)
+                        lead.issues_found = issues
+                        lead.improvement_opportunities = opps
+                        if run_audit:
+                            terminal.lead_stage(
+                                company=company_name,
+                                stage="audit",
+                                detail=f"issues={len(issues)} opportunities={len(opps)}",
+                            )
 
                     # ── Stage 4: Instagram signal ─────────────────────────────
-                    insta_status = InstagramStatus.UNKNOWN
-                    instagram_handle_found = False
-                    if include_ig:
-                        handle: Optional[str] = None
-                        if website_response is not None and website_response.text:
-                            try:
-                                handle = instagram_checker.extract_handle_from_html(website_response.text)
-                            except Exception:
-                                pass
+                        insta_status = InstagramStatus.UNKNOWN
+                        instagram_handle_found = False
+                        if include_ig:
+                            handle: Optional[str] = None
+                            if website_response is not None and website_response.text:
+                                try:
+                                    handle = instagram_checker.extract_handle_from_html(website_response.text)
+                                except Exception:
+                                    pass
 
                         # Fallback: website_url itself might be an instagram profile
-                        if not handle and website and "instagram.com" in website:
-                            import re as _re
-                            m = _re.search(r"instagram\.com/([A-Za-z0-9_.]{1,30})", website)
-                            if m:
-                                handle = m.group(1)
+                            if not handle and website and "instagram.com" in website:
+                                import re as _re
+                                m = _re.search(r"instagram\.com/([A-Za-z0-9_.]{1,30})", website)
+                                if m:
+                                    handle = m.group(1)
 
-                        if handle:
-                            instagram_handle_found = True
-                            try:
-                                insta_status = instagram_checker.analyze_handle(handle)
-                            except Exception:
-                                insta_status = InstagramStatus.UNKNOWN
+                            if handle:
+                                instagram_handle_found = True
+                                try:
+                                    insta_status = instagram_checker.analyze_handle(handle)
+                                except Exception:
+                                    insta_status = InstagramStatus.UNKNOWN
 
-                    lead.instagram_status = insta_status
+                        lead.instagram_status = insta_status
 
                     # ── Stage 4b: Email + social media ───────────────────────
-                    osm_tags = details.get("_osm_tags", {})
-                    osm_social = SocialCollector.extract_from_osm_tags(osm_tags)
-                    html_social: dict = {}
-                    if website_response is not None and website_response.text:
-                        try:
-                            html_social = social_checker.extract_from_html(
-                                website_response.text, website or ""
-                            )
-                        except Exception as exc:
-                            log.debug("Social extraction error for %s: %s", website, exc)
-                    social = SocialCollector.merge(html_social, osm_social)
-                    lead.email        = social.get("email")
-                    lead.facebook_url  = social.get("facebook")
-                    lead.twitter_url   = social.get("twitter")
-                    lead.tiktok_url    = social.get("tiktok")
-                    lead.linkedin_url  = social.get("linkedin")
-                    lead.youtube_url   = social.get("youtube")
-                    lead.pinterest_url = social.get("pinterest")
-                    lead.whatsapp_url  = social.get("whatsapp")
-                    lead.telegram_url  = social.get("telegram")
-                    if social.get("instagram"):
-                        lead.instagram_url = social.get("instagram")
+                        osm_tags = details.get("_osm_tags", {})
+                        osm_social = SocialCollector.extract_from_osm_tags(osm_tags)
+                        html_social: dict = {}
+                        if website_response is not None and website_response.text:
+                            try:
+                                html_social = social_checker.extract_from_html(
+                                    website_response.text, website or ""
+                                )
+                            except Exception as exc:
+                                log.debug("Social extraction error for %s: %s", website, exc)
+                        social = SocialCollector.merge(html_social, osm_social)
+                        lead.email        = social.get("email")
+                        lead.facebook_url  = social.get("facebook")
+                        lead.twitter_url   = social.get("twitter")
+                        lead.tiktok_url    = social.get("tiktok")
+                        lead.linkedin_url  = social.get("linkedin")
+                        lead.youtube_url   = social.get("youtube")
+                        lead.pinterest_url = social.get("pinterest")
+                        lead.whatsapp_url  = social.get("whatsapp")
+                        lead.telegram_url  = social.get("telegram")
+                        if social.get("instagram"):
+                            lead.instagram_url = social.get("instagram")
 
                     # ── Stage 4c: Contact discovery ──────────────────────────
-                    contact_discovery_run = False
-                    if enable_contact_disc and contact_disc is not None:
-                        contact_discovery_run = True
-                        try:
-                            contact_result = contact_disc.extract(lead, website_response)
-                            contact_disc.apply_to_lead(lead, contact_result)
-                        except Exception as exc:
-                            log.debug("Contact discovery error for %s: %s", company_name, exc)
+                        contact_discovery_run = False
+                        if enable_contact_disc and contact_disc is not None:
+                            contact_discovery_run = True
+                            try:
+                                contact_result = contact_disc.extract(lead, website_response)
+                                contact_disc.apply_to_lead(lead, contact_result)
+                            except Exception as exc:
+                                log.debug("Contact discovery error for %s: %s", company_name, exc)
 
                     # ── Stage 4d: Email guesser ──────────────────────────────
-                    if (enable_email_guesser_flag and email_guesser is not None
-                            and not lead.primary_email
-                            and not (lead.all_emails and any(lead.all_emails))
-                            and lead.website_url):
-                        try:
-                            guessed = email_guesser.guess(lead.website_url, lead.niche)
-                            if guessed:
-                                lead.guessed_email = guessed
-                        except Exception as exc:
-                            log.debug("Email guesser error for %s: %s", company_name, exc)
-                    if contact_discovery_run:
-                        terminal.lead_stage(
-                            company=company_name,
-                            stage="contact",
-                            detail=f"emails={len(lead.all_emails)} guessed={'yes' if bool(lead.guessed_email) else 'no'}",
-                        )
+                        if (enable_email_guesser_flag and email_guesser is not None
+                                and not lead.primary_email
+                                and not (lead.all_emails and any(lead.all_emails))
+                                and lead.website_url):
+                            try:
+                                guessed = email_guesser.guess(lead.website_url, lead.niche)
+                                if guessed:
+                                    lead.guessed_email = guessed
+                            except Exception as exc:
+                                log.debug("Email guesser error for %s: %s", company_name, exc)
+                        if contact_discovery_run:
+                            terminal.lead_stage(
+                                company=company_name,
+                                stage="contact",
+                                detail=f"emails={len(lead.all_emails)} guessed={'yes' if bool(lead.guessed_email) else 'no'}",
+                            )
 
                     # ── Stage 5: Scoring ─────────────────────────────────────
-                    lead.business_strength_score = compute_business_strength(rating, reviews)
-                    lead.website_problem_score   = compute_website_problem_score(status, issues)
-                    lead.commercial_opportunity_score = compute_commercial_opportunity(
-                        status, assigned_niche,
-                        city_demand_weight=city_weight,
-                        instagram_status=insta_status,
-                    )
-                    lead.instagram_signal_score = compute_instagram_signal(insta_status)
-                    lead.contactability_score = compute_contactability_score(lead)
-                    lead.lead_priority_score = compute_final_score(
-                        lead.business_strength_score,
-                        lead.website_problem_score,
-                        lead.commercial_opportunity_score,
-                        lead.instagram_signal_score,
-                        lead.contactability_score,
-                    )
-                    lead.tier = assign_tier(
-                        lead.lead_priority_score,
-                        lead.business_strength_score,
-                        lead.website_status.value,
-                    )
+                        lead.business_strength_score = compute_business_strength(rating, reviews)
+                        lead.website_problem_score   = compute_website_problem_score(status, issues)
+                        lead.commercial_opportunity_score = compute_commercial_opportunity(
+                            status, assigned_niche,
+                            city_demand_weight=city_weight,
+                            instagram_status=insta_status,
+                        )
+                        lead.instagram_signal_score = compute_instagram_signal(insta_status)
+                        lead.contactability_score = compute_contactability_score(lead)
+                        lead.lead_priority_score = compute_final_score(
+                            lead.business_strength_score,
+                            lead.website_problem_score,
+                            lead.commercial_opportunity_score,
+                            lead.instagram_signal_score,
+                            lead.contactability_score,
+                        )
+                        lead.tier = assign_tier(
+                            lead.lead_priority_score,
+                            lead.business_strength_score,
+                            lead.website_status.value,
+                        )
 
                     # ── Outreach ─────────────────────────────────────────────
-                    lead.outreach_angle = _generate_outreach_angle(lead)
-                    lead.short_pitch    = _generate_short_pitch(lead)
+                        lead.outreach_angle = _generate_outreach_angle(lead)
+                        lead.short_pitch    = _generate_short_pitch(lead)
 
-                    emails_found = len({
-                        email.lower()
-                        for email in [lead.email, lead.primary_email, lead.guessed_email, *lead.all_emails]
-                        if email
-                    })
-                    social_links_found = sum(
-                        1 for value in (
-                            lead.facebook_url,
-                            lead.twitter_url,
-                            lead.instagram_url,
-                            lead.tiktok_url,
-                            lead.linkedin_url,
-                            lead.youtube_url,
-                            lead.pinterest_url,
-                            lead.whatsapp_url,
-                            lead.telegram_url,
+                        emails_found = len({
+                            email.lower()
+                            for email in [lead.email, lead.primary_email, lead.guessed_email, *lead.all_emails]
+                            if email
+                        })
+                        social_links_found = sum(
+                            1 for value in (
+                                lead.facebook_url,
+                                lead.twitter_url,
+                                lead.instagram_url,
+                                lead.tiktok_url,
+                                lead.linkedin_url,
+                                lead.youtube_url,
+                                lead.pinterest_url,
+                                lead.whatsapp_url,
+                                lead.telegram_url,
+                            )
+                            if value
                         )
-                        if value
-                    )
-                    stages = {
-                        "website_fetched": bool(website),
-                        "audit_run": bool(run_audit and status == WebsiteStatus.HAS_WEBSITE and website_response is not None),
-                        "json_ld_found": False,
-                        "emails_found": emails_found,
-                        "social_links_found": social_links_found,
-                        "instagram_handle_found": instagram_handle_found,
-                        "contact_discovery_run": contact_discovery_run,
-                    }
-                    logger.log_lead(lead, stages, time.monotonic() - _lead_start)
-                    terminal.lead_complete(
-                        company=company_name,
-                        city=city,
-                        niche=assigned_niche,
-                        website_status=lead.website_status.value,
-                        tier=lead.tier,
-                        score=lead.lead_priority_score,
-                    )
-                    leads.append(lead)
+                        stages = {
+                            "website_fetched": bool(website),
+                            "audit_run": bool(run_audit and status == WebsiteStatus.HAS_WEBSITE and website_response is not None),
+                            "json_ld_found": False,
+                            "emails_found": emails_found,
+                            "social_links_found": social_links_found,
+                            "instagram_handle_found": instagram_handle_found,
+                            "contact_discovery_run": contact_discovery_run,
+                        }
+                        logger.log_lead(lead, stages, time.monotonic() - _lead_start)
+                        terminal.lead_complete(
+                            company=company_name,
+                            city=city,
+                            niche=assigned_niche,
+                            website_status=lead.website_status.value,
+                            tier=lead.tier,
+                            score=lead.lead_priority_score,
+                        )
+                        leads.append(lead)
 
             # ── Stage 2b: Social discovery (per city after niche queries) ─────
             if enable_social_disc and ig_discovery and fb_discovery and matcher:
                 terminal.batch(name="social-discovery", detail=f"start city={city}")
                 for niche in canonical_niches:
-                    try:
-                        ig_candidates = ig_discovery.search(niche, city, country, max_results)
-                    except Exception as exc:
-                        log.warning("Instagram discovery failed for %s/%s: %s", niche, city, exc)
-                        ig_candidates = []
-                    try:
-                        fb_candidates = fb_discovery.search(niche, city, country, max_results)
-                    except Exception as exc:
-                        log.warning("Facebook discovery failed for %s/%s: %s", niche, city, exc)
-                        fb_candidates = []
-                    ta_candidates = []
-                    if ta_discovery is not None:
+                    candidates = []
+                    for _search_language, search_label in build_search_variants(niche, search_languages):
                         try:
-                            ta_candidates = ta_discovery.search(niche, city, country, max_results)
+                            candidates.extend(
+                                ig_discovery.search(
+                                    niche,
+                                    city,
+                                    country,
+                                    max_results,
+                                    search_term=search_label,
+                                )
+                            )
                         except Exception as exc:
-                            log.warning("TripAdvisor discovery failed for %s/%s: %s", niche, city, exc)
+                            log.warning("Instagram discovery failed for %s/%s: %s", niche, city, exc)
+                        try:
+                            candidates.extend(
+                                fb_discovery.search(
+                                    niche,
+                                    city,
+                                    country,
+                                    max_results,
+                                    search_term=search_label,
+                                )
+                            )
+                        except Exception as exc:
+                            log.warning("Facebook discovery failed for %s/%s: %s", niche, city, exc)
+                        if ta_discovery is not None:
+                            try:
+                                candidates.extend(
+                                    ta_discovery.search(
+                                        niche,
+                                        city,
+                                        country,
+                                        max_results,
+                                        search_term=search_label,
+                                    )
+                                )
+                            except Exception as exc:
+                                log.warning("TripAdvisor discovery failed for %s/%s: %s", niche, city, exc)
 
-                    for candidate in ig_candidates + fb_candidates + ta_candidates:
+                    for candidate in candidates:
                         try:
                             result = matcher.match(candidate, leads)
                         except Exception as exc:
@@ -639,13 +681,15 @@ def generate_summary(
 
     runtime = f"{int(elapsed_seconds // 60)}m {int(elapsed_seconds % 60)}s"
     ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    configured_countries = config.get("countries", [])
+    countries_label = ", ".join(configured_countries) if configured_countries else "Unknown"
 
     lines = [
         "# Europe SMB Lead Discovery — Run Summary",
         f"\n**Timestamp**: {ts}  ",
         f"**Runtime**: {runtime}  ",
         f"**Data source**: OpenStreetMap / Overpass API  ",
-        f"**Countries**: Spain, Netherlands, Portugal  ",
+        f"**Countries**: {countries_label}  ",
         f"**Total leads collected**: {total}",
         "\n## Tier Distribution",
         f"| Tier | Count | Description |",
@@ -718,7 +762,11 @@ def main():
 
     log.info("=== Europe SMB Lead Discovery (OSM) ===")
     run_id = generate_run_id()
-    total_queries = len(config.get("cities", [])) * len(config.get("niches", []))
+    search_languages = get_search_languages(config)
+    total_queries = len(config.get("cities", [])) * sum(
+        len(build_search_variants(niche, search_languages))
+        for niche in config.get("niches", [])
+    )
 
     with TerminalRunLogger(
         run_id,
@@ -772,9 +820,9 @@ def main():
         print(f"  RESULTS: {len(leads)} leads  ({elapsed:.0f}s)")
         print(f"  Tier 1: {tier_counts[1]}  |  Tier 2: {tier_counts[2]}  |  "
               f"Tier 3: {tier_counts[3]}  |  Tier 4: {tier_counts[4]}")
-        print(f"  JSON → {output_json}")
-        print(f"  CSV  → {output_csv}")
-        print(f"  TERMINAL LOG → {terminal.transcript_path}")
+        print(f"  JSON -> {output_json}")
+        print(f"  CSV  -> {output_csv}")
+        print(f"  TERMINAL LOG -> {terminal.transcript_path}")
         print(f"{'='*52}\n")
 
 

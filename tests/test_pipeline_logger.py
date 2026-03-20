@@ -41,6 +41,7 @@ def test_log_run_start_writes_expected_json(tmp_path):
         "cities": ["Berlin", "Munich"],
         "niches": ["dentist"],
         "countries": ["DE"],
+        "search_languages": ["en", "de"],
         "max_results_per_query": 5,
     })
     logger.close()
@@ -51,6 +52,7 @@ def test_log_run_start_writes_expected_json(tmp_path):
     assert event["config_cities"] == ["Berlin", "Munich"]
     assert event["config_niches"] == ["dentist"]
     assert event["config_countries"] == ["DE"]
+    assert event["config_search_languages"] == ["en", "de"]
     assert event["max_results_per_query"] == 5
     assert isinstance(event["ts"], str)
 
@@ -65,6 +67,7 @@ def test_log_query_writes_expected_event(tmp_path):
         "google_places",
         7,
         1.234,
+        search_language="uk",
         fallback=False,
         error=None,
     )
@@ -77,6 +80,7 @@ def test_log_query_writes_expected_event(tmp_path):
         "ts": event["ts"],
         "city": "Berlin",
         "niche": "dentist",
+        "search_language": "uk",
         "source": "google_places",
         "result_count": 7,
         "duration_s": 1.234,

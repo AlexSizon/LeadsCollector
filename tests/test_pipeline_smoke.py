@@ -20,6 +20,7 @@ import pytest
 
 from src.models import BusinessLead
 from src.enums import WebsiteStatus, InstagramStatus
+from src.search_vocabulary import build_search_variants, get_search_languages, resolve_search_label
 
 
 # ---------------------------------------------------------------------------
@@ -275,6 +276,74 @@ class TestPipelineSmoke:
         event_types = {event["event"] for event in events}
         assert "run_start" in event_types
         assert "run_end" in event_types
+
+    def test_multilingual_search_expands_queries_and_keeps_canonical_niche(self):
+        with patch("src.pipeline.GooglePlacesCollector") as MockGPC, \
+             patch("src.pipeline.WebsiteCollector") as MockWC, \
+             patch("src.pipeline.InstagramSignalCollector"):
+
+            mock_places = MagicMock()
+            mock_places.search.return_value = _places_search_result()
+            mock_places.get_place_details.return_value = {
+                **_place_details_result(),
+                "websiteUri": None,
+            }
+            MockGPC.return_value = mock_places
+
+            mock_website = MagicMock()
+            mock_website.check_website.return_value = (WebsiteStatus.NO_WEBSITE, None)
+            MockWC.return_value = mock_website
+
+            cfg = {
+                **MINIMAL_CONFIG,
+                "countries": ["Ukraine"],
+                "cities": ["Kyiv"],
+                "niches": ["beauty salon"],
+                "search_languages": ["en", "uk", "ru"],
+            }
+            from src.pipeline import LeadPipeline
+            pipeline = LeadPipeline(config=cfg, api_key="test-key")
+            results = pipeline.run()
+
+            observed_queries = [call.kwargs["query"] for call in mock_places.search.call_args_list]
+            assert observed_queries == [
+                "beauty salon in Kyiv",
+                "салон краси in Kyiv",
+                "салон красоты in Kyiv",
+            ]
+            assert mock_places.get_place_details.call_count == 1
+            assert len(results) == 1
+            assert results[0].niche == "beauty salon"
+
+    def test_missing_translation_falls_back_to_canonical_label(self):
+        assert resolve_search_label("dentist", "it") == "dentist"
+        assert build_search_variants("dentist", ["it"]) == [("it", "dentist")]
+
+    def test_search_languages_omitted_uses_canonical_query(self):
+        with patch("src.pipeline.GooglePlacesCollector") as MockGPC, \
+             patch("src.pipeline.WebsiteCollector") as MockWC, \
+             patch("src.pipeline.InstagramSignalCollector"):
+
+            mock_places = MagicMock()
+            mock_places.search.return_value = _places_search_result()
+            mock_places.get_place_details.return_value = _place_details_result()
+            MockGPC.return_value = mock_places
+
+            mock_website = MagicMock()
+            mock_website.check_website.return_value = (WebsiteStatus.NO_WEBSITE, None)
+            MockWC.return_value = mock_website
+
+            from src.pipeline import LeadPipeline
+            pipeline = LeadPipeline(config=MINIMAL_CONFIG, api_key="test-key")
+            pipeline.run()
+
+            observed_queries = [call.kwargs["query"] for call in mock_places.search.call_args_list]
+            assert observed_queries == ["dentist in Berlin"]
+
+    def test_get_search_languages_normalizes_and_deduplicates(self):
+        assert get_search_languages({
+            "search_languages": ["EN", "uk", "en", " ", "RU"],
+        }) == ["en", "uk", "ru"]
 
 
 # ---------------------------------------------------------------------------

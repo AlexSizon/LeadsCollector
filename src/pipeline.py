@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import List, Optional
 
 from .logging_utils import PipelineLogger, generate_run_id
+from .search_vocabulary import build_search_variants, get_search_languages
 from .terminal_logging import NullTerminalLogger, TerminalRunLogger
 
 _LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
@@ -150,10 +151,14 @@ class LeadPipeline:
         max_results: int = self.config.get("max_results_per_query", 10)
         min_reviews: int = self.config.get("min_reviews_threshold", 0)
         min_rating: float = self.config.get("min_rating_threshold", 0.0)
-        languages: List[str] = self.config.get("language_priority", ["en"])
+        response_languages: List[str] = self.config.get("language_priority", ["en"])
+        search_languages: List[str] = get_search_languages(self.config)
         include_instagram: bool = self.config.get("include_instagram_analysis", False)
         run_audit: bool = self.config.get("run_website_audit", False)
-        total_queries = len(countries) * len(cities) * len(niches)
+        total_queries = len(countries) * len(cities) * sum(
+            len(build_search_variants(niche, search_languages))
+            for niche in niches
+        )
         query_index = 0
 
         _run_start = time.monotonic()
@@ -167,428 +172,443 @@ class LeadPipeline:
                     city_weight: float = self._city_weights.get(city, self._city_weights.get("default", 1.0))
                     city_lead_start_count = len(leads)
                     for niche in niches:
-                        query_index += 1
-                        query = f"{niche} in {city}"
-                        # Use only primary language per query to avoid duplicates
-                        lang = languages[0] if languages else "en"
-                        _source_is_osm = False
-                        _google_failed = False
-                        _q_start = time.monotonic()
-                        self._terminal_logger.query_start(
-                            index=query_index,
-                            total=total_queries,
-                            city=city,
-                            niche=niche,
-                        )
-                        try:
-                            places = self.places.search(query=query, max_results=max_results, language=lang)
-                        except Exception as _places_exc:
-                            _google_failed = True
-                            _log.warning(
-                                "GooglePlaces failed for '%s', falling back to Overpass: %s",
-                                query, _places_exc,
+                        for search_language, search_label in build_search_variants(niche, search_languages):
+                            query_index += 1
+                            query = f"{search_label} in {city}"
+                            response_lang = response_languages[0] if response_languages else "en"
+                            _source_is_osm = False
+                            _google_failed = False
+                            _q_start = time.monotonic()
+                            self._terminal_logger.query_start(
+                                index=query_index,
+                                total=total_queries,
+                                city=city,
+                                niche=niche,
+                                search_language=search_language,
                             )
                             try:
-                                places = self._overpass.search(
-                                    query=query, max_results=max_results, language=lang,
-                                    city=city, country=country,
+                                places = self.places.search(
+                                    query=query,
+                                    max_results=max_results,
+                                    language=response_lang,
                                 )
-                                _source_is_osm = True
-                            except Exception:
-                                self._logger.log_query(
-                                    city, niche,
-                                    source="overpass",
-                                    result_count=0,
-                                    duration_s=time.monotonic() - _q_start,
-                                    fallback=True,
-                                    error="both sources failed",
+                            except Exception as _places_exc:
+                                _google_failed = True
+                                _log.warning(
+                                    "GooglePlaces failed for '%s', falling back to Overpass: %s",
+                                    query, _places_exc,
                                 )
-                                self._terminal_logger.query_result(
-                                    city=city,
-                                    niche=niche,
-                                    source="overpass",
-                                    result_count=0,
-                                    duration_s=time.monotonic() - _q_start,
-                                    status="upstream_error",
-                                    retry_count=0,
-                                    fallback=True,
-                                    error="both_sources_failed",
-                                )
-                                continue
+                                try:
+                                    places = self._overpass.search(
+                                        query=query,
+                                        max_results=max_results,
+                                        language=response_lang,
+                                        city=city,
+                                        country=country,
+                                        niches=[niche],
+                                    )
+                                    _source_is_osm = True
+                                except Exception:
+                                    self._logger.log_query(
+                                        city,
+                                        niche,
+                                        source="overpass",
+                                        result_count=0,
+                                        duration_s=time.monotonic() - _q_start,
+                                        search_language=search_language,
+                                        fallback=True,
+                                        error="both sources failed",
+                                    )
+                                    self._terminal_logger.query_result(
+                                        city=city,
+                                        niche=niche,
+                                        search_language=search_language,
+                                        source="overpass",
+                                        result_count=0,
+                                        duration_s=time.monotonic() - _q_start,
+                                        status="upstream_error",
+                                        retry_count=0,
+                                        fallback=True,
+                                        error="both_sources_failed",
+                                    )
+                                    continue
 
-                        query_source = "overpass" if _source_is_osm else "google_places"
-                        query_error = None
-                        retry_count = 0
-                        if _source_is_osm:
-                            overpass_meta = getattr(self._overpass, "last_query_meta", {})
-                            if not isinstance(overpass_meta, dict):
-                                overpass_meta = {}
-                            retry_count = int(overpass_meta.get("retry_count", 0))
-                            base_status = str(overpass_meta.get("status", "success" if places else "zero_results"))
-                            query_error = overpass_meta.get("error")
-                            if _google_failed:
-                                if base_status == "success":
-                                    query_status = "fallback_success"
-                                elif base_status == "success_after_retry":
-                                    query_status = "fallback_success_after_retry"
-                                elif base_status == "zero_results":
-                                    query_status = "fallback_zero_results"
+                            query_source = "overpass" if _source_is_osm else "google_places"
+                            query_error = None
+                            retry_count = 0
+                            if _source_is_osm:
+                                overpass_meta = getattr(self._overpass, "last_query_meta", {})
+                                if not isinstance(overpass_meta, dict):
+                                    overpass_meta = {}
+                                retry_count = int(overpass_meta.get("retry_count", 0))
+                                base_status = str(overpass_meta.get("status", "success" if places else "zero_results"))
+                                query_error = overpass_meta.get("error")
+                                if _google_failed:
+                                    if base_status == "success":
+                                        query_status = "fallback_success"
+                                    elif base_status == "success_after_retry":
+                                        query_status = "fallback_success_after_retry"
+                                    elif base_status == "zero_results":
+                                        query_status = "fallback_zero_results"
+                                    else:
+                                        query_status = base_status
                                 else:
                                     query_status = base_status
                             else:
-                                query_status = base_status
-                        else:
-                            query_status = "zero_results" if len(places) == 0 else "success"
+                                query_status = "zero_results" if len(places) == 0 else "success"
 
-                        self._logger.log_query(
-                            city, niche,
-                            source=query_source,
-                            result_count=len(places),
-                            duration_s=time.monotonic() - _q_start,
-                            fallback=_source_is_osm,
-                            error=query_error if query_status in {"upstream_error", "geocode_failed"} else None,
-                        )
-                        self._terminal_logger.query_result(
-                            city=city,
-                            niche=niche,
-                            source=query_source,
-                            result_count=len(places),
-                            duration_s=time.monotonic() - _q_start,
-                            status=query_status,
-                            retry_count=retry_count,
-                            fallback=_source_is_osm,
-                            error=query_error if query_status in {"upstream_error", "geocode_failed"} else None,
-                        )
-
-                        for place in places:
-                            place_id = place.get("id")
-
-                            # -- Skip duplicates across queries --
-                            if place_id and place_id in seen_place_ids:
-                                continue
-                            if place_id:
-                                seen_place_ids.add(place_id)
-
-                            # -- Rating / reviews pre-filter --
-                            rating = place.get("rating")
-                            reviews = place.get("userRatingCount")
-                            if rating is not None and rating < min_rating:
-                                continue
-                            if reviews is not None and reviews < min_reviews:
-                                continue
-
-                            company_name = place.get("displayName", {}).get("text", "")
-                            formatted_address = place.get("formattedAddress", "")
-
-                            # -- Fetch Place Details --
-                            details: dict = {}
-                            if place_id:
-                                try:
-                                    details = self.places.get_place_details(place_id, language=lang)
-                                except Exception:
-                                    pass
-
-                            phone: Optional[str] = details.get("internationalPhoneNumber")
-                            website_url: Optional[str] = details.get("websiteUri")
-                            map_url: Optional[str] = details.get("googleMapsUri")
-                            rating = details.get("rating", rating)
-                            reviews = details.get("userRatingCount", reviews)
-
-                            # -- Build initial lead --
-                            _lead_start = time.monotonic()
-                            lead = BusinessLead(
-                                company_name=company_name,
-                                niche=niche,
-                                country=country,
+                            self._logger.log_query(
+                                city,
+                                niche,
+                                source=query_source,
+                                result_count=len(places),
+                                duration_s=time.monotonic() - _q_start,
+                                search_language=search_language,
+                                fallback=_source_is_osm,
+                                error=query_error if query_status in {"upstream_error", "geocode_failed"} else None,
+                            )
+                            self._terminal_logger.query_result(
                                 city=city,
-                                place_id=place_id,
-                                address=formatted_address,
-                                phone=phone,
-                                google_rating=rating,
-                                google_reviews_count=reviews,
-                                website_url=website_url,
-                                map_url=map_url,
-                            )
-                            if _source_is_osm:
-                                lead.lead_source = LeadSourceType.OSM.value
-                            self._terminal_logger.lead_stage(
-                                company=company_name or "<unknown>",
-                                stage="start",
-                                detail=f"city={city} niche={niche}",
+                                niche=niche,
+                                search_language=search_language,
+                                source=query_source,
+                                result_count=len(places),
+                                duration_s=time.monotonic() - _q_start,
+                                status=query_status,
+                                retry_count=retry_count,
+                                fallback=_source_is_osm,
+                                error=query_error if query_status in {"upstream_error", "geocode_failed"} else None,
                             )
 
-                            # ------------------------------------------------------------------
-                            # Stage 3: Website presence detection
-                            # ------------------------------------------------------------------
-                            website_response = None
-                            if website_url:
-                                status, website_response = self.website.check_website(website_url)
-                            else:
-                                status = WebsiteStatus.NO_WEBSITE
-                            lead.website_status = status
-                            self._terminal_logger.lead_stage(
-                                company=company_name or "<unknown>",
-                                stage="website",
-                                detail=f"status={status.value}",
-                            )
+                            for place in places:
+                                place_id = place.get("id")
 
-                            # ------------------------------------------------------------------
-                            # Stage 3b: Website audit (only if HAS_WEBSITE)
-                            # ------------------------------------------------------------------
-                            issues: List[str] = []
-                            opportunities: List[str] = []
-                            if run_audit and status == WebsiteStatus.HAS_WEBSITE and website_response is not None:
-                                html = website_response.text
-                                tech_issues, tech_opps = audit_technical(
-                                    website_url, html, website_response
+                                # -- Skip duplicates across queries --
+                                if place_id and place_id in seen_place_ids:
+                                    continue
+                                if place_id:
+                                    seen_place_ids.add(place_id)
+
+                                # -- Rating / reviews pre-filter --
+                                rating = place.get("rating")
+                                reviews = place.get("userRatingCount")
+                                if rating is not None and rating < min_rating:
+                                    continue
+                                if reviews is not None and reviews < min_reviews:
+                                    continue
+
+                                company_name = place.get("displayName", {}).get("text", "")
+                                formatted_address = place.get("formattedAddress", "")
+
+                                # -- Fetch Place Details --
+                                details: dict = {}
+                                if place_id:
+                                    try:
+                                        details = self.places.get_place_details(place_id, language=response_lang)
+                                    except Exception:
+                                        pass
+
+                                phone: Optional[str] = details.get("internationalPhoneNumber")
+                                website_url: Optional[str] = details.get("websiteUri")
+                                map_url: Optional[str] = details.get("googleMapsUri")
+                                rating = details.get("rating", rating)
+                                reviews = details.get("userRatingCount", reviews)
+
+                                # -- Build initial lead --
+                                _lead_start = time.monotonic()
+                                lead = BusinessLead(
+                                    company_name=company_name,
+                                    niche=niche,
+                                    country=country,
+                                    city=city,
+                                    place_id=place_id,
+                                    address=formatted_address,
+                                    phone=phone,
+                                    google_rating=rating,
+                                    google_reviews_count=reviews,
+                                    website_url=website_url,
+                                    map_url=map_url,
                                 )
-                                seo_issues, seo_opps = audit_seo(website_url, html)
-                                ux_issues, ux_opps = audit_ux(html)
-                                issues = tech_issues + seo_issues + ux_issues
-                                opportunities = tech_opps + seo_opps + ux_opps
-
-                            lead.issues_found = issues
-                            lead.improvement_opportunities = opportunities
-                            if run_audit:
+                                if _source_is_osm:
+                                    lead.lead_source = LeadSourceType.OSM.value
                                 self._terminal_logger.lead_stage(
                                     company=company_name or "<unknown>",
-                                    stage="audit",
-                                    detail=f"issues={len(issues)} opportunities={len(opportunities)}",
+                                    stage="start",
+                                    detail=f"city={city} niche={niche}",
                                 )
 
-                            # ------------------------------------------------------------------
-                            # Stage 3b2: Social link extraction from website HTML
-                            # ------------------------------------------------------------------
-                            _SOCIAL_PLATFORM_FIELDS = {
-                                "facebook":  "facebook_url",
-                                "twitter":   "twitter_url",
-                                "instagram": "instagram_url",
-                                "tiktok":    "tiktok_url",
-                                "linkedin":  "linkedin_url",
-                                "youtube":   "youtube_url",
-                                "pinterest": "pinterest_url",
-                                "whatsapp":  "whatsapp_url",
-                                "telegram":  "telegram_url",
-                            }
-                            jld = {}
-                            if status == WebsiteStatus.HAS_WEBSITE and website_response is not None:
-                                html_text = website_response.text
-
-                                # Step 1: SocialCollector — inline links in HTML
-                                social_data = self._social_collector.extract_from_html(html_text, website_url or "")
-                                for platform, attr in _SOCIAL_PLATFORM_FIELDS.items():
-                                    val = social_data.get(platform)
-                                    if val and not getattr(lead, attr):
-                                        setattr(lead, attr, val)
-                                if lead.instagram_url and lead.instagram_presence_status == SocialPresenceStatus.UNKNOWN:
-                                    lead.instagram_presence_status = SocialPresenceStatus.FOUND_ON_WEBSITE
-                                    lead.social_discovery_method = "website_html"
-                                if lead.facebook_url and lead.facebook_presence_status == SocialPresenceStatus.UNKNOWN:
-                                    lead.facebook_presence_status = SocialPresenceStatus.FOUND_ON_WEBSITE
-                                    if not lead.social_discovery_method:
-                                        lead.social_discovery_method = "website_html"
-
-                                # Step 2: JSON-LD — schema.org structured data
-                                jld = json_ld_extractor.extract_from_html(html_text) or {}
-                                if jld:
-                                    if jld.get("phone") and not lead.phone:
-                                        lead.phone = normalize_phone(jld["phone"]) or jld["phone"]
-                                    if jld.get("email"):
-                                        jld_email = jld["email"].lower()
-                                        if jld_email not in [e.lower() for e in lead.all_emails]:
-                                            lead.all_emails.append(jld_email)
-                                    for soc_url in jld.get("social_urls", []):
-                                        if "instagram.com" in soc_url and not lead.instagram_url:
-                                            lead.instagram_url = soc_url
-                                            lead.instagram_presence_status = SocialPresenceStatus.FOUND_IN_SCHEMA
-                                            lead.social_discovery_method = "json_ld"
-                                        elif "facebook.com" in soc_url and not lead.facebook_url:
-                                            lead.facebook_url = soc_url
-                                            lead.facebook_presence_status = SocialPresenceStatus.FOUND_IN_SCHEMA
-                                            if not lead.social_discovery_method:
-                                                lead.social_discovery_method = "json_ld"
-                                        elif "twitter.com" in soc_url or "x.com" in soc_url:
-                                            if not lead.twitter_url:
-                                                lead.twitter_url = soc_url
-                                        elif "linkedin.com" in soc_url and not lead.linkedin_url:
-                                            lead.linkedin_url = soc_url
-                                        elif "tiktok.com" in soc_url and not lead.tiktok_url:
-                                            lead.tiktok_url = soc_url
-                                        elif "youtube.com" in soc_url and not lead.youtube_url:
-                                            lead.youtube_url = soc_url
-                                        elif "pinterest.com" in soc_url and not lead.pinterest_url:
-                                            lead.pinterest_url = soc_url
-
-                                # Step 3: Linktree hub resolution
-                                if self._enable_linktree_resolution:
-                                    hub_url: Optional[str] = None
-                                    for _, attr in _SOCIAL_PLATFORM_FIELDS.items():
-                                        url_val = getattr(lead, attr)
-                                        if url_val:
-                                            domain_part = extract_root_domain(url_val)
-                                            if domain_part in _LINK_HUB_DOMAINS:
-                                                hub_url = url_val
-                                                break
-                                    if hub_url:
-                                        try:
-                                            import requests as _requests
-                                            hub_resp = _requests.get(
-                                                hub_url,
-                                                timeout=5,
-                                                headers={"User-Agent": "Mozilla/5.0"},
-                                            )
-                                            if hub_resp.ok:
-                                                hub_data = self._social_collector.extract_from_html(
-                                                    hub_resp.text, hub_url
-                                                )
-                                                for platform, attr in _SOCIAL_PLATFORM_FIELDS.items():
-                                                    val = hub_data.get(platform)
-                                                    if val and not getattr(lead, attr):
-                                                        setattr(lead, attr, val)
-                                                if lead.instagram_url and lead.instagram_presence_status == SocialPresenceStatus.UNKNOWN:
-                                                    lead.instagram_presence_status = SocialPresenceStatus.FOUND_VIA_HUB
-                                                    lead.social_discovery_method = "linktree_hub"
-                                                elif lead.instagram_url and lead.social_discovery_method is None:
-                                                    lead.social_discovery_method = "linktree_hub"
-                                                if lead.facebook_url and lead.facebook_presence_status == SocialPresenceStatus.UNKNOWN:
-                                                    lead.facebook_presence_status = SocialPresenceStatus.FOUND_VIA_HUB
-                                        except Exception as _hub_exc:
-                                            _log.debug("Hub resolution failed for %s: %s", hub_url, _hub_exc)
-
-                            # ------------------------------------------------------------------
-                            # Stage 3c: Contact discovery (only if HAS_WEBSITE)
-                            # ------------------------------------------------------------------
-                            contact_discovery_run = False
-                            if self._contact_discovery is not None and status == WebsiteStatus.HAS_WEBSITE and website_response is not None:
-                                contact_discovery_run = True
-                                try:
-                                    contact_result = self._contact_discovery.extract(lead, website_response)
-                                    self._contact_discovery.apply_to_lead(lead, contact_result)
-                                except Exception as exc:
-                                    _log.debug("ContactDiscovery error for %s: %s", company_name, exc)
-                            if contact_discovery_run:
-                                self._terminal_logger.lead_stage(
-                                    company=company_name or "<unknown>",
-                                    stage="contact",
-                                    detail=f"emails={len(lead.all_emails)} guessed={'yes' if bool(lead.guessed_email) else 'no'}",
-                                )
-
-                            # EmailGuesser fallback — only when no emails found yet
-                            if (
-                                self._email_guesser is not None
-                                and not lead.all_emails
-                                and not lead.guessed_email
-                                and status == WebsiteStatus.HAS_WEBSITE
-                                and website_url
-                            ):
-                                try:
-                                    guessed = self._email_guesser.guess(website_url, lead.niche)
-                                    if guessed:
-                                        lead.guessed_email = guessed
-                                except Exception as exc:
-                                    _log.debug("EmailGuesser failed for %s: %s", company_name, exc)
-
-                            # ------------------------------------------------------------------
-                            # Stage 4: Instagram signal analysis
-                            # ------------------------------------------------------------------
-                            insta_status = InstagramStatus.UNKNOWN
-                            instagram_handle_found = False
-                            if include_instagram:
-                                handle: Optional[str] = None
-
-                                # Use instagram_url already discovered by SocialCollector / JSON-LD
-                                if lead.instagram_url:
-                                    from re import search as _re_search
-                                    m = _re_search(r"instagram\.com/([A-Za-z0-9_.]{1,30})", lead.instagram_url)
-                                    if m:
-                                        handle = m.group(1)
-
-                                # Fallback: check if website_url itself is an Instagram URL
-                                if not handle and website_url and "instagram.com" in website_url:
-                                    from re import search as _re_search
-                                    m = _re_search(r"instagram\.com/([A-Za-z0-9_.]{1,30})", website_url)
-                                    if m:
-                                        handle = m.group(1)
-
-                                if handle:
-                                    instagram_handle_found = True
-                                    insta_status = self.instagram.analyze_handle(handle)
+                                # ------------------------------------------------------------------
+                                # Stage 3: Website presence detection
+                                # ------------------------------------------------------------------
+                                website_response = None
+                                if website_url:
+                                    status, website_response = self.website.check_website(website_url)
                                 else:
-                                    insta_status = InstagramStatus.UNKNOWN
-
-                            lead.instagram_status = insta_status
-
-                            # ------------------------------------------------------------------
-                            # Stage 5: Lead scoring
-                            # ------------------------------------------------------------------
-                            niche_weight = self._niche_demand_weights.get(niche, 1.0)
-                            lead.business_strength_score = compute_business_strength(rating, reviews, niche_weight=niche_weight)
-                            lead.website_problem_score = compute_website_problem_score(status, issues)
-                            lead.commercial_opportunity_score = compute_commercial_opportunity(
-                                status, niche,
-                                city_demand_weight=city_weight,
-                                instagram_status=insta_status,
-                            )
-                            lead.instagram_signal_score = compute_instagram_signal(insta_status)
-                            lead.contactability_score = compute_contactability_score(lead)
-                            lead.lead_priority_score = compute_final_score(
-                                lead.business_strength_score,
-                                lead.website_problem_score,
-                                lead.commercial_opportunity_score,
-                                lead.instagram_signal_score,
-                                lead.contactability_score,
-                                weights=self._final_score_weights or None,
-                            )
-                            lead.tier = assign_tier(
-                                lead.lead_priority_score,
-                                lead.business_strength_score,
-                                lead.website_status.value,
-                            )
-
-                            # ------------------------------------------------------------------
-                            # Outreach angle & short pitch
-                            # ------------------------------------------------------------------
-                            lead.outreach_angle = self._generate_outreach_angle(lead)
-                            lead.short_pitch = self._generate_short_pitch(lead)
-
-                            emails_found = len({
-                                email.lower()
-                                for email in [lead.email, lead.primary_email, lead.guessed_email, *lead.all_emails]
-                                if email
-                            })
-                            social_links_found = sum(
-                                1 for value in (
-                                    lead.facebook_url,
-                                    lead.twitter_url,
-                                    lead.instagram_url,
-                                    lead.tiktok_url,
-                                    lead.linkedin_url,
-                                    lead.youtube_url,
-                                    lead.pinterest_url,
-                                    lead.whatsapp_url,
-                                    lead.telegram_url,
+                                    status = WebsiteStatus.NO_WEBSITE
+                                lead.website_status = status
+                                self._terminal_logger.lead_stage(
+                                    company=company_name or "<unknown>",
+                                    stage="website",
+                                    detail=f"status={status.value}",
                                 )
-                                if value
-                            )
-                            stages = {
-                                "website_fetched": bool(website_url),
-                                "audit_run": bool(run_audit and status == WebsiteStatus.HAS_WEBSITE and website_response is not None),
-                                "json_ld_found": bool(jld),
-                                "emails_found": emails_found,
-                                "social_links_found": social_links_found,
-                                "instagram_handle_found": instagram_handle_found,
-                                "contact_discovery_run": contact_discovery_run,
-                            }
-                            self._logger.log_lead(lead, stages, time.monotonic() - _lead_start)
-                            self._terminal_logger.lead_complete(
-                                company=company_name or "<unknown>",
-                                city=city,
-                                niche=niche,
-                                website_status=lead.website_status.value,
-                                tier=lead.tier,
-                                score=lead.lead_priority_score,
-                            )
-                            leads.append(lead)
+
+                                # ------------------------------------------------------------------
+                                # Stage 3b: Website audit (only if HAS_WEBSITE)
+                                # ------------------------------------------------------------------
+                                issues: List[str] = []
+                                opportunities: List[str] = []
+                                if run_audit and status == WebsiteStatus.HAS_WEBSITE and website_response is not None:
+                                    html = website_response.text
+                                    tech_issues, tech_opps = audit_technical(
+                                        website_url, html, website_response
+                                    )
+                                    seo_issues, seo_opps = audit_seo(website_url, html)
+                                    ux_issues, ux_opps = audit_ux(html)
+                                    issues = tech_issues + seo_issues + ux_issues
+                                    opportunities = tech_opps + seo_opps + ux_opps
+
+                                lead.issues_found = issues
+                                lead.improvement_opportunities = opportunities
+                                if run_audit:
+                                    self._terminal_logger.lead_stage(
+                                        company=company_name or "<unknown>",
+                                        stage="audit",
+                                        detail=f"issues={len(issues)} opportunities={len(opportunities)}",
+                                    )
+
+                                # ------------------------------------------------------------------
+                                # Stage 3b2: Social link extraction from website HTML
+                                # ------------------------------------------------------------------
+                                _SOCIAL_PLATFORM_FIELDS = {
+                                    "facebook":  "facebook_url",
+                                    "twitter":   "twitter_url",
+                                    "instagram": "instagram_url",
+                                    "tiktok":    "tiktok_url",
+                                    "linkedin":  "linkedin_url",
+                                    "youtube":   "youtube_url",
+                                    "pinterest": "pinterest_url",
+                                    "whatsapp":  "whatsapp_url",
+                                    "telegram":  "telegram_url",
+                                }
+                                jld = {}
+                                if status == WebsiteStatus.HAS_WEBSITE and website_response is not None:
+                                    html_text = website_response.text
+
+                                    # Step 1: SocialCollector — inline links in HTML
+                                    social_data = self._social_collector.extract_from_html(html_text, website_url or "")
+                                    for platform, attr in _SOCIAL_PLATFORM_FIELDS.items():
+                                        val = social_data.get(platform)
+                                        if val and not getattr(lead, attr):
+                                            setattr(lead, attr, val)
+                                    if lead.instagram_url and lead.instagram_presence_status == SocialPresenceStatus.UNKNOWN:
+                                        lead.instagram_presence_status = SocialPresenceStatus.FOUND_ON_WEBSITE
+                                        lead.social_discovery_method = "website_html"
+                                    if lead.facebook_url and lead.facebook_presence_status == SocialPresenceStatus.UNKNOWN:
+                                        lead.facebook_presence_status = SocialPresenceStatus.FOUND_ON_WEBSITE
+                                        if not lead.social_discovery_method:
+                                            lead.social_discovery_method = "website_html"
+
+                                    # Step 2: JSON-LD — schema.org structured data
+                                    jld = json_ld_extractor.extract_from_html(html_text) or {}
+                                    if jld:
+                                        if jld.get("phone") and not lead.phone:
+                                            lead.phone = normalize_phone(jld["phone"]) or jld["phone"]
+                                        if jld.get("email"):
+                                            jld_email = jld["email"].lower()
+                                            if jld_email not in [e.lower() for e in lead.all_emails]:
+                                                lead.all_emails.append(jld_email)
+                                        for soc_url in jld.get("social_urls", []):
+                                            if "instagram.com" in soc_url and not lead.instagram_url:
+                                                lead.instagram_url = soc_url
+                                                lead.instagram_presence_status = SocialPresenceStatus.FOUND_IN_SCHEMA
+                                                lead.social_discovery_method = "json_ld"
+                                            elif "facebook.com" in soc_url and not lead.facebook_url:
+                                                lead.facebook_url = soc_url
+                                                lead.facebook_presence_status = SocialPresenceStatus.FOUND_IN_SCHEMA
+                                                if not lead.social_discovery_method:
+                                                    lead.social_discovery_method = "json_ld"
+                                            elif "twitter.com" in soc_url or "x.com" in soc_url:
+                                                if not lead.twitter_url:
+                                                    lead.twitter_url = soc_url
+                                            elif "linkedin.com" in soc_url and not lead.linkedin_url:
+                                                lead.linkedin_url = soc_url
+                                            elif "tiktok.com" in soc_url and not lead.tiktok_url:
+                                                lead.tiktok_url = soc_url
+                                            elif "youtube.com" in soc_url and not lead.youtube_url:
+                                                lead.youtube_url = soc_url
+                                            elif "pinterest.com" in soc_url and not lead.pinterest_url:
+                                                lead.pinterest_url = soc_url
+
+                                    # Step 3: Linktree hub resolution
+                                    if self._enable_linktree_resolution:
+                                        hub_url: Optional[str] = None
+                                        for _, attr in _SOCIAL_PLATFORM_FIELDS.items():
+                                            url_val = getattr(lead, attr)
+                                            if url_val:
+                                                domain_part = extract_root_domain(url_val)
+                                                if domain_part in _LINK_HUB_DOMAINS:
+                                                    hub_url = url_val
+                                                    break
+                                        if hub_url:
+                                            try:
+                                                import requests as _requests
+                                                hub_resp = _requests.get(
+                                                    hub_url,
+                                                    timeout=5,
+                                                    headers={"User-Agent": "Mozilla/5.0"},
+                                                )
+                                                if hub_resp.ok:
+                                                    hub_data = self._social_collector.extract_from_html(
+                                                        hub_resp.text, hub_url
+                                                    )
+                                                    for platform, attr in _SOCIAL_PLATFORM_FIELDS.items():
+                                                        val = hub_data.get(platform)
+                                                        if val and not getattr(lead, attr):
+                                                            setattr(lead, attr, val)
+                                                    if lead.instagram_url and lead.instagram_presence_status == SocialPresenceStatus.UNKNOWN:
+                                                        lead.instagram_presence_status = SocialPresenceStatus.FOUND_VIA_HUB
+                                                        lead.social_discovery_method = "linktree_hub"
+                                                    elif lead.instagram_url and lead.social_discovery_method is None:
+                                                        lead.social_discovery_method = "linktree_hub"
+                                                    if lead.facebook_url and lead.facebook_presence_status == SocialPresenceStatus.UNKNOWN:
+                                                        lead.facebook_presence_status = SocialPresenceStatus.FOUND_VIA_HUB
+                                            except Exception as _hub_exc:
+                                                _log.debug("Hub resolution failed for %s: %s", hub_url, _hub_exc)
+
+                                # ------------------------------------------------------------------
+                                # Stage 3c: Contact discovery (only if HAS_WEBSITE)
+                                # ------------------------------------------------------------------
+                                contact_discovery_run = False
+                                if self._contact_discovery is not None and status == WebsiteStatus.HAS_WEBSITE and website_response is not None:
+                                    contact_discovery_run = True
+                                    try:
+                                        contact_result = self._contact_discovery.extract(lead, website_response)
+                                        self._contact_discovery.apply_to_lead(lead, contact_result)
+                                    except Exception as exc:
+                                        _log.debug("ContactDiscovery error for %s: %s", company_name, exc)
+                                if contact_discovery_run:
+                                    self._terminal_logger.lead_stage(
+                                        company=company_name or "<unknown>",
+                                        stage="contact",
+                                        detail=f"emails={len(lead.all_emails)} guessed={'yes' if bool(lead.guessed_email) else 'no'}",
+                                    )
+
+                                # EmailGuesser fallback — only when no emails found yet
+                                if (
+                                    self._email_guesser is not None
+                                    and not lead.all_emails
+                                    and not lead.guessed_email
+                                    and status == WebsiteStatus.HAS_WEBSITE
+                                    and website_url
+                                ):
+                                    try:
+                                        guessed = self._email_guesser.guess(website_url, lead.niche)
+                                        if guessed:
+                                            lead.guessed_email = guessed
+                                    except Exception as exc:
+                                        _log.debug("EmailGuesser failed for %s: %s", company_name, exc)
+
+                                # ------------------------------------------------------------------
+                                # Stage 4: Instagram signal analysis
+                                # ------------------------------------------------------------------
+                                insta_status = InstagramStatus.UNKNOWN
+                                instagram_handle_found = False
+                                if include_instagram:
+                                    handle: Optional[str] = None
+
+                                    # Use instagram_url already discovered by SocialCollector / JSON-LD
+                                    if lead.instagram_url:
+                                        from re import search as _re_search
+                                        m = _re_search(r"instagram\.com/([A-Za-z0-9_.]{1,30})", lead.instagram_url)
+                                        if m:
+                                            handle = m.group(1)
+
+                                    # Fallback: check if website_url itself is an Instagram URL
+                                    if not handle and website_url and "instagram.com" in website_url:
+                                        from re import search as _re_search
+                                        m = _re_search(r"instagram\.com/([A-Za-z0-9_.]{1,30})", website_url)
+                                        if m:
+                                            handle = m.group(1)
+
+                                    if handle:
+                                        instagram_handle_found = True
+                                        insta_status = self.instagram.analyze_handle(handle)
+                                    else:
+                                        insta_status = InstagramStatus.UNKNOWN
+
+                                lead.instagram_status = insta_status
+
+                                # ------------------------------------------------------------------
+                                # Stage 5: Lead scoring
+                                # ------------------------------------------------------------------
+                                niche_weight = self._niche_demand_weights.get(niche, 1.0)
+                                lead.business_strength_score = compute_business_strength(rating, reviews, niche_weight=niche_weight)
+                                lead.website_problem_score = compute_website_problem_score(status, issues)
+                                lead.commercial_opportunity_score = compute_commercial_opportunity(
+                                    status, niche,
+                                    city_demand_weight=city_weight,
+                                    instagram_status=insta_status,
+                                )
+                                lead.instagram_signal_score = compute_instagram_signal(insta_status)
+                                lead.contactability_score = compute_contactability_score(lead)
+                                lead.lead_priority_score = compute_final_score(
+                                    lead.business_strength_score,
+                                    lead.website_problem_score,
+                                    lead.commercial_opportunity_score,
+                                    lead.instagram_signal_score,
+                                    lead.contactability_score,
+                                    weights=self._final_score_weights or None,
+                                )
+                                lead.tier = assign_tier(
+                                    lead.lead_priority_score,
+                                    lead.business_strength_score,
+                                    lead.website_status.value,
+                                )
+
+                                # ------------------------------------------------------------------
+                                # Outreach angle & short pitch
+                                # ------------------------------------------------------------------
+                                lead.outreach_angle = self._generate_outreach_angle(lead)
+                                lead.short_pitch = self._generate_short_pitch(lead)
+
+                                emails_found = len({
+                                    email.lower()
+                                    for email in [lead.email, lead.primary_email, lead.guessed_email, *lead.all_emails]
+                                    if email
+                                })
+                                social_links_found = sum(
+                                    1 for value in (
+                                        lead.facebook_url,
+                                        lead.twitter_url,
+                                        lead.instagram_url,
+                                        lead.tiktok_url,
+                                        lead.linkedin_url,
+                                        lead.youtube_url,
+                                        lead.pinterest_url,
+                                        lead.whatsapp_url,
+                                        lead.telegram_url,
+                                    )
+                                    if value
+                                )
+                                stages = {
+                                    "website_fetched": bool(website_url),
+                                    "audit_run": bool(run_audit and status == WebsiteStatus.HAS_WEBSITE and website_response is not None),
+                                    "json_ld_found": bool(jld),
+                                    "emails_found": emails_found,
+                                    "social_links_found": social_links_found,
+                                    "instagram_handle_found": instagram_handle_found,
+                                    "contact_discovery_run": contact_discovery_run,
+                                }
+                                self._logger.log_lead(lead, stages, time.monotonic() - _lead_start)
+                                self._terminal_logger.lead_complete(
+                                    company=company_name or "<unknown>",
+                                    city=city,
+                                    niche=niche,
+                                    website_status=lead.website_status.value,
+                                    tier=lead.tier,
+                                    score=lead.lead_priority_score,
+                                )
+                                leads.append(lead)
                     self._terminal_logger.city_complete(
                         city=city,
                         completed_queries=query_index,
@@ -604,16 +624,34 @@ class LeadPipeline:
                 for country in countries:
                     for city in cities:
                         for niche in niches:
-                            try:
-                                ig_candidates = self._ig_discovery.search(niche, city, country, max_results)
-                            except Exception:
-                                ig_candidates = []
-                            try:
-                                fb_candidates = self._fb_discovery.search(niche, city, country, max_results)
-                            except Exception:
-                                fb_candidates = []
+                            candidates = []
+                            for search_language, search_label in build_search_variants(niche, search_languages):
+                                try:
+                                    candidates.extend(
+                                        self._ig_discovery.search(
+                                            niche,
+                                            city,
+                                            country,
+                                            max_results,
+                                            search_term=search_label,
+                                        )
+                                    )
+                                except Exception:
+                                    pass
+                                try:
+                                    candidates.extend(
+                                        self._fb_discovery.search(
+                                            niche,
+                                            city,
+                                            country,
+                                            max_results,
+                                            search_term=search_label,
+                                        )
+                                    )
+                                except Exception:
+                                    pass
 
-                            for candidate in ig_candidates + fb_candidates:
+                            for candidate in candidates:
                                 try:
                                     match_result = self._matcher.match(candidate, leads)
                                 except Exception:

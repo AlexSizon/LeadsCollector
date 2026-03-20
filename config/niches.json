@@ -88,5 +88,178 @@
     "gym": "gym",
     "fitness_center": "gym",
     "tattoo_shop": "tattoo"
+  },
+  "localized_search_labels": {
+    "dentist": {
+      "nl": "tandarts",
+      "en": "dentist",
+      "es": "dentista",
+      "pt": "dentista",
+      "de": "zahnarzt",
+      "uk": "стоматолог",
+      "ru": "стоматолог"
+    },
+    "barbershop": {
+      "nl": "barbershop",
+      "en": "barbershop",
+      "es": "barberia",
+      "pt": "barbearia",
+      "de": "barbershop",
+      "uk": "барбершоп",
+      "ru": "барбершоп"
+    },
+    "beauty salon": {
+      "nl": "schoonheidssalon",
+      "en": "beauty salon",
+      "es": "salon de belleza",
+      "pt": "salao de beleza",
+      "de": "kosmetikstudio",
+      "uk": "салон краси",
+      "ru": "салон красоты"
+    },
+    "physiotherapy": {
+      "nl": "fysiotherapie",
+      "en": "physiotherapy",
+      "es": "fisioterapia",
+      "pt": "fisioterapia",
+      "de": "physiotherapie",
+      "uk": "фізіотерапія",
+      "ru": "физиотерапия"
+    },
+    "restaurant": {
+      "nl": "restaurant",
+      "en": "restaurant",
+      "es": "restaurante",
+      "pt": "restaurante",
+      "de": "restaurant",
+      "uk": "ресторан",
+      "ru": "ресторан"
+    },
+    "hotel": {
+      "nl": "hotel",
+      "en": "hotel",
+      "es": "hotel",
+      "pt": "hotel",
+      "de": "hotel",
+      "uk": "готель",
+      "ru": "отель"
+    },
+    "lawyer": {
+      "nl": "advocaat",
+      "en": "lawyer",
+      "es": "abogado",
+      "pt": "advogado",
+      "de": "anwalt",
+      "uk": "юрист",
+      "ru": "юрист"
+    },
+    "accountant": {
+      "nl": "accountant",
+      "en": "accountant",
+      "es": "contador",
+      "pt": "contabilista",
+      "de": "buchhalter",
+      "uk": "бухгалтер",
+      "ru": "бухгалтер"
+    },
+    "gym": {
+      "nl": "sportschool",
+      "en": "gym",
+      "es": "gimnasio",
+      "pt": "academia",
+      "de": "fitnessstudio",
+      "uk": "спортзал",
+      "ru": "спортзал"
+    },
+    "tattoo": {
+      "nl": "tattooshop",
+      "en": "tattoo studio",
+      "es": "estudio de tatuajes",
+      "pt": "estudio de tatuagem",
+      "de": "tattoostudio",
+      "uk": "тату салон",
+      "ru": "тату салон"
+    },
+    "gift shop": {
+      "nl": "cadeauwinkel",
+      "en": "gift shop",
+      "es": "tienda de regalos",
+      "pt": "loja de presentes",
+      "de": "geschenkladen",
+      "uk": "магазин подарунків",
+      "ru": "магазин подарков"
+    },
+    "florist": {
+      "nl": "bloemist",
+      "en": "florist",
+      "es": "floristeria",
+      "pt": "florista",
+      "de": "blumenladen",
+      "uk": "квітковий магазин",
+      "ru": "цветочный магазин"
+    },
+    "bakery": {
+      "nl": "bakkerij",
+      "en": "bakery",
+      "es": "panaderia",
+      "pt": "padaria",
+      "de": "baeckerei",
+      "uk": "пекарня",
+      "ru": "пекарня"
+    },
+    "boutique": {
+      "nl": "boetiek",
+      "en": "boutique",
+      "es": "boutique",
+      "pt": "boutique",
+      "de": "boutique",
+      "uk": "бутік",
+      "ru": "бутик"
+    },
+    "cosmetics shop": {
+      "nl": "cosmeticawinkel",
+      "en": "cosmetics shop",
+      "es": "tienda de cosmeticos",
+      "pt": "loja de cosmeticos",
+      "de": "kosmetikgeschaeft",
+      "uk": "магазин косметики",
+      "ru": "магазин косметики"
+    },
+    "specialty food shop": {
+      "nl": "delicatessenwinkel",
+      "en": "specialty food shop",
+      "es": "tienda gourmet",
+      "pt": "loja gourmet",
+      "de": "feinkostladen",
+      "uk": "магазин делікатесів",
+      "ru": "магазин деликатесов"
+    },
+    "pet shop": {
+      "nl": "dierenwinkel",
+      "en": "pet shop",
+      "es": "tienda de mascotas",
+      "pt": "loja de animais",
+      "de": "tierhandlung",
+      "uk": "зоомагазин",
+      "ru": "зоомагазин"
+    },
+    "home decor shop": {
+      "nl": "woondecoratiewinkel",
+      "en": "home decor shop",
+      "es": "tienda de decoracion",
+      "pt": "loja de decoracao",
+      "de": "wohnaccessoires",
+      "uk": "магазин декору для дому",
+      "ru": "магазин декора для дома"
+    },
+    "craft store": {
+      "nl": "hobbywinkel",
+      "en": "craft store",
+      "es": "tienda de manualidades",
+      "pt": "loja de artesanato",
+      "de": "bastelladen",
+      "uk": "магазин рукоділля",
+      "ru": "магазин рукоделия"
+    }
   }
 }

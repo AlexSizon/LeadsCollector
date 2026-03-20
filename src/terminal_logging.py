@@ -92,7 +92,15 @@ class NullTerminalLogger:
     ) -> None:
         return None
 
-    def query_start(self, *, index: int, total: int, city: str, niche: str) -> None:
+    def query_start(
+        self,
+        *,
+        index: int,
+        total: int,
+        city: str,
+        niche: str,
+        search_language: str = "canonical",
+    ) -> None:
         return None
 
     def query_result(
@@ -100,6 +108,7 @@ class NullTerminalLogger:
         *,
         city: str,
         niche: str,
+        search_language: str = "canonical",
         source: str,
         result_count: int,
         duration_s: float,
@@ -318,16 +327,27 @@ class TerminalRunLogger:
             )
         )
 
-    def query_start(self, *, index: int, total: int, city: str, niche: str) -> None:
+    def query_start(
+        self,
+        *,
+        index: int,
+        total: int,
+        city: str,
+        niche: str,
+        search_language: str = "canonical",
+    ) -> None:
         self._total_queries = total
         self._current_city = city
-        self.info(f"[QUERY {index}/{total}] start city={city} niche={niche}")
+        self.info(
+            f"[QUERY {index}/{total}] start city={city} niche={niche} lang={search_language}"
+        )
 
     def query_result(
         self,
         *,
         city: str,
         niche: str,
+        search_language: str = "canonical",
         source: str,
         result_count: int,
         duration_s: float,
@@ -350,6 +370,7 @@ class TerminalRunLogger:
             "[QUERY]",
             f"done city={city}",
             f"niche={niche}",
+            f"lang={search_language}",
             f"source={source}",
             f"results={result_count}",
             f"duration={duration_s:.3f}s",
@@ -365,7 +386,7 @@ class TerminalRunLogger:
         if self.verbosity == "normal" and status in {"zero_results", "upstream_error", "geocode_failed", "fallback_zero_results"}:
             detail = (
                 f"kind=query city={city} niche={niche} status={status} "
-                f"results={result_count} retries={retry_count}"
+                f"lang={search_language} results={result_count} retries={retry_count}"
             )
             if error:
                 detail += f" error={error}"

@@ -45,6 +45,7 @@ class InputConfig(BaseModel):
     countries: List[str] = PydanticField(default_factory=list)
     cities: List[str] = PydanticField(default_factory=list)
     niches: List[str] = PydanticField(default_factory=list)
+    search_languages: List[str] = PydanticField(default_factory=list)
     language_priority: List[str] = PydanticField(default_factory=lambda: ["en"])
     max_results_per_query: int = 20
     min_reviews_threshold: int = 0

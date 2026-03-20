@@ -88,6 +88,8 @@ class TripAdvisorCollector:
         city: str,
         country: str = "",
         max_results: int = 10,
+        *,
+        search_term: Optional[str] = None,
     ) -> List[SocialCandidate]:
         """Return a list of SocialCandidates discovered on TripAdvisor.
 
@@ -98,7 +100,8 @@ class TripAdvisorCollector:
         if niche.lower() not in HOSPITALITY_NICHES:
             return []
 
-        query = f'site:tripadvisor.com "{niche}" "{city}"'
+        query_term = search_term or niche
+        query = f'site:tripadvisor.com "{query_term}" "{city}"'
         log.debug("TripAdvisor discovery search: %s", query)
 
         try:

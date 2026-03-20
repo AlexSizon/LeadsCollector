@@ -1,0 +1,62 @@
+{
+  "_comment": "Ukraine SMB validation run capped for an approximately 100-lead test before the full launch",
+  "_base_config": "config/run_ukraine_smb.json",
+  "_test_strategy": [
+    "5 cities x 4 niches x max 5 results per query gives an upper bound of 100 raw leads before deduplication",
+    "uses the same enrichment flags as the full preset so the test exercises the real pipeline path",
+    "keeps dedicated output files separate from the full Ukraine run"
+  ],
+
+  "countries": ["Ukraine"],
+
+  "cities": [
+    "Kyiv",
+    "Lviv",
+    "Kharkiv",
+    "Odesa",
+    "Ivano-Frankivsk"
+  ],
+
+  "city_country_map": {
+    "Kyiv": "Ukraine",
+    "Lviv": "Ukraine",
+    "Kharkiv": "Ukraine",
+    "Odesa": "Ukraine",
+    "Ivano-Frankivsk": "Ukraine"
+  },
+
+  "niches": [
+    "beauty salon",
+    "restaurant",
+    "bakery",
+    "florist"
+  ],
+
+  "language_priority": ["uk", "en", "ru"],
+  "search_languages": ["en", "uk", "ru"],
+
+  "max_results_per_query": 5,
+
+  "min_reviews_threshold": 0,
+  "min_rating_threshold": 0.0,
+
+  "include_instagram_analysis": true,
+  "run_website_audit": true,
+
+  "enable_social_discovery": true,
+  "enable_contact_discovery": true,
+  "enable_tripadvisor_discovery": true,
+  "enable_email_guesser": true,
+  "social_request_delay": 3.0,
+
+  "output_format": "json",
+  "request_delay": 3.0,
+  "terminal_verbosity": "normal",
+  "terminal_summary_every_queries": 5,
+
+  "output": {
+    "json": "output/leads_ukraine_smb_test_100.json",
+    "csv": "output/leads_ukraine_smb_test_100.csv",
+    "summary": "output/run_summary_ukraine_smb_test_100.md"
+  }
+}

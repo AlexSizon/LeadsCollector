@@ -6,7 +6,7 @@ Four event types are emitted:
 
 * ``run_start``  — once at the beginning of a run
 * ``run_end``    — once at the end (always, via try/finally)
-* ``query``      — once per city × niche search query
+* ``query``      — once per city × niche × search-language search query
 * ``lead``       — once per processed business lead
 
 Usage::
@@ -17,7 +17,7 @@ Usage::
     with PipelineLogger(run_id, log_dir=Path("logs")) as logger:
         logger.log_run_start(config)
         ...
-        logger.log_query(city, niche, source, len(results), duration_s)
+        logger.log_query(city, niche, source, len(results), duration_s, search_language="canonical")
         ...
         logger.log_lead(lead, stages, duration_s)
         ...
@@ -77,6 +77,7 @@ class PipelineLogger:
             "config_cities": config.get("cities", []),
             "config_niches": config.get("niches", []),
             "config_countries": config.get("countries", []),
+            "config_search_languages": config.get("search_languages", []),
             "max_results_per_query": config.get("max_results_per_query"),
         })
 
@@ -98,16 +99,18 @@ class PipelineLogger:
         result_count: int,
         duration_s: float,
         *,
+        search_language: str = "canonical",
         fallback: bool = False,
         error: Optional[str] = None,
     ) -> None:
-        """Emit a ``query`` event for one city × niche search."""
+        """Emit a ``query`` event for one city × niche × search-language search."""
         self._write({
             "event": "query",
             "run_id": self._run_id,
             "ts": datetime.now(tz=timezone.utc).isoformat(),
             "city": city,
             "niche": niche,
+            "search_language": search_language,
             "source": source,
             "result_count": result_count,
             "duration_s": round(duration_s, 3),

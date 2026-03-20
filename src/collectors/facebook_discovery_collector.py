@@ -87,6 +87,8 @@ class FacebookDiscoveryCollector:
         city: str,
         country: str = "",
         max_results: int = 10,
+        *,
+        search_term: Optional[str] = None,
     ) -> List[SocialCandidate]:
         """Return a list of SocialCandidates discovered on Facebook.
 
@@ -94,7 +96,8 @@ class FacebookDiscoveryCollector:
         the top pages to extract visible contact information.
         Falls back to empty list on any error.
         """
-        query = f'site:facebook.com "{niche}" "{city}"'
+        query_term = search_term or niche
+        query = f'site:facebook.com "{query_term}" "{city}"'
         log.debug("Facebook discovery search: %s", query)
 
         try:

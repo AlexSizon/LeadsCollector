@@ -1,0 +1,67 @@
+{
+  "_comment": "Ukraine SMB preset for website sales, redesign, booking-flow, and local SEO outreach",
+  "_data_source": "OpenStreetMap Overpass API fallback-compatible preset",
+  "_niche_selection_rationale": [
+    "beauty salon and restaurant cover strong booking/menu-driven website demand",
+    "bakery and florist benefit from local SEO, seasonal landing pages, and order/contact flows",
+    "boutique, cosmetics shop, pet shop, and home decor shop fit catalog-first SMB website upgrades",
+    "all selected niches map to the current Overpass collector without requiring new tag support"
+  ],
+
+  "countries": ["Ukraine"],
+
+  "cities": [
+    "Kyiv",
+    "Lviv",
+    "Kharkiv",
+    "Odesa",
+    "Ivano-Frankivsk"
+  ],
+
+  "city_country_map": {
+    "Kyiv": "Ukraine",
+    "Lviv": "Ukraine",
+    "Kharkiv": "Ukraine",
+    "Odesa": "Ukraine",
+    "Ivano-Frankivsk": "Ukraine"
+  },
+
+  "niches": [
+    "beauty salon",
+    "restaurant",
+    "bakery",
+    "florist",
+    "boutique",
+    "cosmetics shop",
+    "pet shop",
+    "home decor shop"
+  ],
+
+  "language_priority": ["uk", "en", "ru"],
+  "search_languages": ["en", "uk", "ru"],
+
+  "max_results_per_query": 500,
+
+  "min_reviews_threshold": 0,
+  "min_rating_threshold": 0.0,
+
+  "include_instagram_analysis": true,
+  "run_website_audit": true,
+
+  "enable_social_discovery": true,
+  "enable_contact_discovery": true,
+  "enable_tripadvisor_discovery": true,
+  "enable_email_guesser": true,
+  "social_request_delay": 3.0,
+
+  "output_format": "json",
+  "request_delay": 3.0,
+  "terminal_verbosity": "normal",
+  "terminal_summary_every_queries": 8,
+
+  "output": {
+    "json": "output/leads_ukraine_smb.json",
+    "csv": "output/leads_ukraine_smb.csv",
+    "summary": "output/run_summary_ukraine_smb.md"
+  }
+}

@@ -187,8 +187,8 @@ def test_src_main_creates_transcript_and_step_logs(tmp_path, monkeypatch):
     assert structured_log.exists()
     assert "[RUN] entry=src.main" in transcript_text
     assert "verbosity=normal" in transcript_text
-    assert "[QUERY 1/1] start city=Berlin niche=dentist" in transcript_text
-    assert "[QUERY] done city=Berlin niche=dentist source=google_places results=1 duration=" in transcript_text
+    assert "[QUERY 1/1] start city=Berlin niche=dentist lang=canonical" in transcript_text
+    assert "[QUERY] done city=Berlin niche=dentist lang=canonical source=google_places results=1 duration=" in transcript_text
     assert "status=success" in transcript_text
     assert "retries=0" in transcript_text
     assert "[SUMMARY] city city=Berlin" in transcript_text
@@ -280,8 +280,8 @@ def test_run_europe_smb_creates_transcript_and_step_logs(tmp_path, monkeypatch):
     assert structured_log.exists()
     assert "[RUN] entry=run_europe_smb.py" in transcript_text
     assert "verbosity=normal" in transcript_text
-    assert "[QUERY 1/1] start city=Lisbon niche=restaurant" in transcript_text
-    assert "[QUERY] done city=Lisbon niche=restaurant source=overpass results=1 duration=" in transcript_text
+    assert "[QUERY 1/1] start city=Lisbon niche=restaurant lang=canonical" in transcript_text
+    assert "[QUERY] done city=Lisbon niche=restaurant lang=canonical source=overpass results=1 duration=" in transcript_text
     assert "status=success" in transcript_text
     assert "retries=0" in transcript_text
     assert "[SUMMARY] city city=Lisbon" in transcript_text
@@ -289,3 +289,87 @@ def test_run_europe_smb_creates_transcript_and_step_logs(tmp_path, monkeypatch):
     assert "[BATCH] dedup done before=1 after=1 removed=0" in transcript_text
     assert "[EXPORT] summary path=" in transcript_text
     assert "[LEAD] company=Lisbon Bistro stage=start" not in transcript_text
+
+
+def test_run_europe_smb_counts_multilingual_query_slots(tmp_path, monkeypatch):
+    output_json = tmp_path / "osm_leads_multi.json"
+    output_csv = tmp_path / "osm_leads_multi.csv"
+    output_summary = tmp_path / "osm_summary_multi.md"
+    config_path = tmp_path / "osm_multi_config.json"
+    config_path.write_text(json.dumps({
+        "countries": ["Ukraine"],
+        "cities": ["Kyiv"],
+        "city_country_map": {"Kyiv": "Ukraine"},
+        "niches": ["beauty salon"],
+        "search_languages": ["en", "uk", "ru"],
+        "max_results_per_query": 5,
+        "min_reviews_threshold": 0,
+        "min_rating_threshold": 0.0,
+        "include_instagram_analysis": False,
+        "run_website_audit": False,
+        "request_delay": 0,
+        "enable_social_discovery": False,
+        "enable_contact_discovery": False,
+        "enable_tripadvisor_discovery": False,
+        "enable_email_guesser": False,
+        "terminal_summary_every_queries": 10,
+        "output": {
+            "json": str(output_json),
+            "csv": str(output_csv),
+            "summary": str(output_summary),
+        },
+    }), encoding="utf-8")
+
+    monkeypatch.setattr(sys, "argv", ["python", "--config", str(config_path)])
+
+    with patch("run_europe_smb.OverpassCollector") as MockOPC, \
+         patch("run_europe_smb.WebsiteCollector") as MockWC, \
+         patch("run_europe_smb.InstagramSignalCollector") as MockIG:
+        mock_collector = MagicMock()
+        mock_collector.search.return_value = []
+        mock_collector.last_query_meta = {
+            "status": "zero_results",
+            "retry_count": 0,
+            "error": None,
+        }
+        MockOPC.return_value = mock_collector
+
+        mock_website = MagicMock()
+        mock_website.check_website.return_value = (WebsiteStatus.NO_WEBSITE, None)
+        MockWC.return_value = mock_website
+
+        mock_ig = MagicMock()
+        mock_ig.extract_handle_from_html.return_value = None
+        mock_ig.analyze_handle.return_value = InstagramStatus.UNKNOWN
+        MockIG.return_value = mock_ig
+
+        import run_europe_smb as runner_module
+
+        log_dir = tmp_path / "logs_multi"
+        monkeypatch.setattr(runner_module, "LOG_DIR", log_dir)
+        runner_module.main()
+
+    transcript = next(log_dir.glob("terminal_*.log"))
+    transcript_text = transcript.read_text(encoding="utf-8")
+
+    assert "query_slots=3" in transcript_text
+    assert "[QUERY 1/3] start city=Kyiv niche=beauty salon lang=en" in transcript_text
+
+
+def test_terminal_run_logger_query_lines_include_search_language(tmp_path):
+    with TerminalRunLogger("20260320_130003", tmp_path, verbosity="normal") as terminal:
+        terminal.query_start(index=2, total=6, city="Kyiv", niche="beauty salon", search_language="uk")
+        terminal.query_result(
+            city="Kyiv",
+            niche="beauty salon",
+            search_language="uk",
+            source="overpass",
+            result_count=3,
+            duration_s=2.5,
+            status="success",
+            retry_count=1,
+        )
+
+    transcript = (tmp_path / "terminal_20260320_130003.log").read_text(encoding="utf-8")
+    assert "[QUERY 2/6] start city=Kyiv niche=beauty salon lang=uk" in transcript
+    assert "[QUERY] done city=Kyiv niche=beauty salon lang=uk source=overpass results=3 duration=2.500s retries=1 status=success" in transcript

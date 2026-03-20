@@ -62,6 +62,7 @@ Edit `config/markets.json` to set your target markets:
   "countries": ["Germany", "Spain", "Netherlands"],
   "cities": ["Berlin", "Munich", "Madrid", "Barcelona", "Amsterdam"],
   "niches": ["dentist", "barbershop", "beauty salon"],
+  "search_languages": ["en", "de", "es", "nl"],
   "language_priority": ["en", "de", "es", "nl"],
   "max_results_per_query": 50,
   "min_reviews_threshold": 20,
@@ -72,11 +73,41 @@ Edit `config/markets.json` to set your target markets:
 }
 ```
 
+Bundled presets are also available when you want a ready-to-run campaign without hand-editing the market list. For Ukraine-focused website sales outreach, use `config/run_ukraine_smb.json`.
+
+`search_languages` controls which languages the pipeline uses to form discovery queries. `language_priority` still controls response/detail language where the upstream source supports it. Supported search languages are `nl`, `en`, `es`, `pt`, `de`, `uk`, and `ru`. If `search_languages` is omitted, the pipeline stays backward compatible and searches with the canonical niche labels from `niches`.
+
+The Ukraine preset targets `Kyiv`, `Lviv`, `Kharkiv`, `Odesa`, and `Ivano-Frankivsk` and intentionally limits niches to categories that both:
+- map cleanly to the current Overpass fallback collector
+- have strong website-improvement demand such as booking, menus, local SEO, catalog pages, and better contact flows
+
+The curated Ukraine niche set is:
+- `beauty salon`
+- `restaurant`
+- `bakery`
+- `florist`
+- `boutique`
+- `cosmetics shop`
+- `pet shop`
+- `home decor shop`
+
+The bundled Ukraine presets now search each niche in `en`, `uk`, and `ru` via `search_languages: ["en", "uk", "ru"]` while keeping `language_priority` tuned for Ukrainian-first responses.
+
 ### 4. Run the pipeline
 
 **JSON output to file:**
 ```bash
 python -m src.main --config config/markets.json --output data/leads.json
+```
+
+**Ukraine preset with the OSM-first runner:**
+```bash
+python run_europe_smb.py --config config/run_ukraine_smb.json
+```
+
+**Ukraine validation run capped at about 100 raw leads before deduplication:**
+```bash
+python run_europe_smb.py --config config/run_ukraine_smb_test_100.json
 ```
 
 **CSV output to file:**
@@ -117,6 +148,8 @@ You can also set defaults in config files:
 ```
 
 In `normal` mode, the transcript favors operator readability and emits city/final summaries, retry-aware query outcomes, and anomaly lines such as zero-result queries or unexpected website states.
+
+For long OSM-based runs, expect occasional Overpass retries and possible Google Search `429` responses from the optional social-discovery collectors. The core OSM discovery, website audit, contact discovery, scoring, deduplication, and export pipeline can still complete successfully, but social enrichment may be partial when Google throttles search requests.
 
 ### 5. Run tests
 
