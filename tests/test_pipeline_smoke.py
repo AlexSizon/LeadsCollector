@@ -49,6 +49,17 @@ REQUIRED_JSON_KEYS = {
     "improvement_opportunities",
     "outreach_angle",
     "short_pitch",
+    "contact_provenance",
+    "email_eligibility",
+    "email_eligibility_reason",
+    "outreach_policy_decision",
+    "outreach_policy_reason",
+    "outreach_policy_version",
+    "offer_type",
+    "email_subject",
+    "email_opening",
+    "email_cta",
+    "email_body_preview",
 }
 
 
@@ -187,6 +198,76 @@ class TestPipelineSmoke:
         for lead in results:
             assert isinstance(lead.short_pitch, str)
             assert len(lead.short_pitch.strip()) > 0
+
+    def test_email_outreach_fields_are_populated_for_direct_email_lead(self):
+        config = {
+            **MINIMAL_CONFIG,
+            "enable_contact_discovery": True,
+            "enable_email_guesser": False,
+        }
+        with patch("src.pipeline.GooglePlacesCollector") as MockGPC, \
+             patch("src.pipeline.WebsiteCollector") as MockWC, \
+             patch("src.pipeline.InstagramSignalCollector") as MockIG, \
+             patch("src.pipeline.ContactDiscovery") as MockCD:
+
+            mock_places = MagicMock()
+            mock_places.search.return_value = _places_search_result()
+            mock_places.get_place_details.return_value = {
+                **_place_details_result(),
+                "websiteUri": "https://smiledental.example",
+            }
+            MockGPC.return_value = mock_places
+
+            mock_website = MagicMock()
+            mock_response = MagicMock()
+            mock_response.text = """
+                <html>
+                  <body>
+                    <a href="mailto:hello@smiledental.example">Email</a>
+                  </body>
+                </html>
+            """
+            mock_website.check_website.return_value = (WebsiteStatus.HAS_WEBSITE, mock_response)
+            MockWC.return_value = mock_website
+
+            mock_ig = MagicMock()
+            mock_ig.extract_handle_from_html.return_value = None
+            mock_ig.analyze_handle.return_value = InstagramStatus.UNKNOWN
+            MockIG.return_value = mock_ig
+
+            mock_cd = MagicMock()
+            mock_cd.extract.return_value = MagicMock(
+                primary_email="hello@smiledental.example",
+                all_emails=["hello@smiledental.example"],
+                primary_phone=None,
+                all_phones=[],
+                whatsapp_links=[],
+                messenger_links=[],
+                booking_links=[],
+                contact_form_urls=[],
+                primary_contact_method="email",
+            )
+            mock_cd.apply_to_lead.side_effect = (
+                lambda lead, result: setattr(lead, "primary_email", result.primary_email)
+                or setattr(lead, "all_emails", result.all_emails)
+                or setattr(lead, "primary_contact_method", result.primary_contact_method)
+            )
+            MockCD.return_value = mock_cd
+
+            from src.pipeline import LeadPipeline
+
+            pipeline = LeadPipeline(config=config, api_key="test-key")
+            results = pipeline.run()
+
+        lead = results[0]
+        assert lead.contact_provenance["email"] == "scraped"
+        assert lead.email_eligibility == "allowed"
+        assert lead.outreach_policy_decision == "allowed"
+        assert lead.offer_type == "website-improvement"
+        assert "urgent" not in (lead.email_subject or "").lower()
+        assert lead.email_opening
+        assert lead.email_cta
+        assert lead.email_body_preview
 
     def test_duplicate_place_id_deduplicated(self):
         """If the same place_id appears twice (e.g. from two queries), it should dedup."""

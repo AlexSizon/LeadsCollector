@@ -22,8 +22,19 @@ from typing import List, Optional
 from .logging_utils import PipelineLogger, generate_run_id
 from .search_vocabulary import build_search_variants, get_search_languages
 from .terminal_logging import NullTerminalLogger, TerminalRunLogger
+from .outreach import (
+    build_contact_provenance,
+    classify_email_eligibility,
+    derive_offer_type,
+    generate_email_body_preview,
+    generate_email_cta,
+    generate_email_opening,
+    generate_email_subject,
+    load_policy_config,
+)
 
 _LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+_OUTREACH_POLICY_PATH = Path(__file__).resolve().parent.parent / "config" / "outreach_policy.json"
 
 from .collectors.google_places_collector import GooglePlacesCollector
 from .collectors.overpass_collector import OverpassCollector
@@ -131,6 +142,9 @@ class LeadPipeline:
         self._run_id = run_id or generate_run_id()
         self._logger = PipelineLogger(self._run_id, _LOG_DIR)
         self._terminal_logger = terminal_logger or NullTerminalLogger()
+        self._outreach_policy = load_policy_config(
+            config.get("outreach_policy_path") or str(_OUTREACH_POLICY_PATH)
+        )
 
         enable_social = config.get("enable_social_discovery", False)
         if enable_social:
@@ -566,10 +580,9 @@ class LeadPipeline:
                                 )
 
                                 # ------------------------------------------------------------------
-                                # Outreach angle & short pitch
+                                # Outreach angle, eligibility, and email draft
                                 # ------------------------------------------------------------------
-                                lead.outreach_angle = self._generate_outreach_angle(lead)
-                                lead.short_pitch = self._generate_short_pitch(lead)
+                                self._apply_outreach_fields(lead, jld=jld)
 
                                 emails_found = len({
                                     email.lower()
@@ -701,8 +714,7 @@ class LeadPipeline:
                                         social_lead.business_strength_score,
                                         social_lead.website_status.value,
                                     )
-                                    social_lead.outreach_angle = self._generate_outreach_angle(social_lead)
-                                    social_lead.short_pitch = self._generate_short_pitch(social_lead)
+                                    self._apply_outreach_fields(social_lead)
                                     leads.append(social_lead)
                                     # task 9.1: queue stubs with a website for deferred contact discovery
                                     if social_lead.website_url:
@@ -729,6 +741,7 @@ class LeadPipeline:
                                 _stub.guessed_email = _guessed
                         except Exception as _exc:
                             _log.debug("EmailGuesser failed for stub %s: %s", _stub.company_name, _exc)
+                self._apply_outreach_fields(_stub)
 
             # Finalise presence statuses — leads still UNKNOWN with no URL → NOT_FOUND
             for _lead in leads:
@@ -761,6 +774,38 @@ class LeadPipeline:
     # ------------------------------------------------------------------
     # Outreach helpers
     # ------------------------------------------------------------------
+
+    def _apply_outreach_fields(
+        self,
+        lead: BusinessLead,
+        *,
+        jld: Optional[dict] = None,
+        suppressed: bool = False,
+    ) -> None:
+        """Populate eligibility, policy, and email draft fields for one lead."""
+        lead.outreach_angle = self._generate_outreach_angle(lead)
+        lead.short_pitch = self._generate_short_pitch(lead)
+        lead.contact_provenance = build_contact_provenance(lead, jld=jld)
+
+        eligibility, eligibility_reason, policy_decision, policy_reason, policy_version = (
+            classify_email_eligibility(
+                lead,
+                policy=self._outreach_policy,
+                suppressed=suppressed,
+            )
+        )
+        lead.email_eligibility = eligibility.value
+        lead.email_eligibility_reason = eligibility_reason
+        lead.outreach_policy_decision = policy_decision.value
+        lead.outreach_policy_reason = policy_reason
+        lead.outreach_policy_version = policy_version
+
+        offer_type = derive_offer_type(lead)
+        lead.offer_type = offer_type.value
+        lead.email_subject = generate_email_subject(lead)
+        lead.email_opening = generate_email_opening(lead)
+        lead.email_cta = generate_email_cta(lead)
+        lead.email_body_preview = generate_email_body_preview(lead)
 
     def _generate_outreach_angle(self, lead: BusinessLead) -> str:
         """Formulate the outreach angle based on observed evidence signals only."""
